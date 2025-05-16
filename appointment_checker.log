@@ -1,0 +1,14 @@
+2025-05-16 23:26:25,638 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://192.168.178.26:8080
+2025-05-16 23:26:25,638 - INFO - [33mPress CTRL+C to quit[0m
+2025-05-16 23:26:28,757 - INFO - Navigated to appointment website
+2025-05-16 23:26:28,825 - INFO - Selected office: TEHERAN
+2025-05-16 23:26:29,242 - INFO - Selected office and proceeded to next step
+2025-05-16 23:26:29,294 - INFO - Selected visa type: Residence permit
+2025-05-16 23:26:29,412 - INFO - Selected visa type and proceeded to next step
+2025-05-16 23:26:29,617 - INFO - Proceeded through Number person page
+2025-05-16 23:26:29,923 - INFO - Proceeded through information page
+2025-05-16 23:26:40,254 - INFO - No appointments found
+2025-05-16 23:27:24,648 - INFO - Program terminated by user
