@@ -151,7 +151,7 @@ async def main():
                 checker = AppointmentChecker()
                 error_count = 0
 
-        await asyncio.sleep(900)  # Sleep for 30 minutes
+        await asyncio.sleep(900)  # Sleep for 15 minutes
 
 # Flask App to Keep Bot Running
 app = Flask(__name__)
