@@ -13,14 +13,23 @@ from aiogram import Bot, Dispatcher, types
 from flask import Flask
 import threading
 
-# Configure logging
-logging.basicConfig(level=logging.INFO,
-                   format='%(asctime)s - %(levelname)s - %(message)s',
-                   filename='appointment_checker.log')
+from dotenv import load_dotenv
+import os
+
+# Load the .env file
+load_dotenv()
+
+
+# Configure logging------------------------------------------------------------------------------------
+#logging.basicConfig(level=logging.INFO,
+   #                format='%(asctime)s - %(levelname)s - %(message)s',
+      #             filename='appointment_checker.log')
+
+# Configure logging------------------------------------------------------------------------------------
 
 # Telegram Bot Setup
-TOKEN = "7440542620:AAETXXQdnWB1sxff7dZytowRMup67BUBQWs"
-CHAT_ID = "1176238554"
+TOKEN = os.getenv("TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot=bot)  # Corrected Dispatcher initialization
 
