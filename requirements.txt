@@ -1,3 +1,4 @@
 selenium
 aiogram
 Flask
+python-dotenv

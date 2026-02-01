@@ -3,12 +3,14 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 import time
 import asyncio
 import logging
+import re
+import difflib
 from aiogram import Bot, Dispatcher, types
 from flask import Flask
 import threading
@@ -39,6 +41,108 @@ class AppointmentChecker:
         self.setup_driver()
         self.wait = WebDriverWait(self.driver, 10)  # 10-second timeout
 
+    def _click_css_with_retry(self, css_selector: str, attempts: int = 3) -> bool:
+        for _ in range(attempts):
+            try:
+                el = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, css_selector)))
+                el.click()
+                return True
+            except StaleElementReferenceException:
+                continue
+        return False
+
+    def _click_css_any_context(self, css_selector: str, attempts: int = 3) -> bool:
+        for _ in range(attempts):
+            try:
+                self.driver.switch_to.default_content()
+                if self._click_css_with_retry(css_selector, attempts=1):
+                    return True
+
+                iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+                for frame in iframes:
+                    try:
+                        self.driver.switch_to.default_content()
+                        self.driver.switch_to.frame(frame)
+                        if self._click_css_with_retry(css_selector, attempts=1):
+                            return True
+                    except StaleElementReferenceException:
+                        continue
+                    finally:
+                        self.driver.switch_to.default_content()
+            except StaleElementReferenceException:
+                continue
+        return False
+
+    def _get_select_by_id_with_retry(self, element_id: str, attempts: int = 3) -> Select:
+        last_exc = None
+        for _ in range(attempts):
+            try:
+                el = self.wait.until(EC.presence_of_element_located((By.ID, element_id)))
+                self.wait.until(lambda d: len(d.find_elements(By.CSS_SELECTOR, f"#{element_id} option")) > 1)
+                return Select(el)
+            except StaleElementReferenceException as e:
+                last_exc = e
+                continue
+        raise last_exc if last_exc is not None else StaleElementReferenceException(
+            f"Unable to locate stable select element #{element_id}"
+        )
+
+    def _select_option_fuzzy_with_retry(self, element_id: str, target_text: str, attempts: int = 3) -> bool:
+        for _ in range(attempts):
+            try:
+                select = self._get_select_by_id_with_retry(element_id, attempts=1)
+                return self._select_option_fuzzy(select, target_text)
+            except StaleElementReferenceException:
+                continue
+        return False
+
+    def _normalize_visible_text(self, text: str) -> str:
+        if text is None:
+            return ""
+        text = text.replace("\u2013", "-").replace("\u2014", "-")
+        return re.sub(r"\s+", " ", text).strip().upper()
+
+    def _select_option_fuzzy(self, select: Select, target_text: str) -> bool:
+        target_norm = self._normalize_visible_text(target_text)
+
+        for option in select.options:
+            if self._normalize_visible_text(option.text) == target_norm:
+                select.select_by_visible_text(option.text)
+                return True
+
+        for option in select.options:
+            opt_norm = self._normalize_visible_text(option.text)
+            if target_norm and (target_norm in opt_norm or opt_norm in target_norm):
+                select.select_by_visible_text(option.text)
+                return True
+
+        normalized_to_original = {}
+        for option in select.options:
+            opt_norm = self._normalize_visible_text(option.text)
+            if opt_norm and opt_norm not in normalized_to_original:
+                normalized_to_original[opt_norm] = option.text
+
+        normalized_options = list(normalized_to_original.keys())
+        close = difflib.get_close_matches(target_norm, normalized_options, n=3, cutoff=0.8)
+        if close:
+            chosen_norm = close[0]
+            chosen_text = normalized_to_original[chosen_norm]
+            logging.warning(
+                "Office option '%s' not found exactly; selecting closest match '%s'",
+                target_text,
+                chosen_text,
+            )
+            select.select_by_visible_text(chosen_text)
+            return True
+
+        available = [opt.text for opt in select.options if (opt.text or "").strip()]
+        logging.error(
+            "Office option '%s' not found. Available Office options: %s",
+            target_text,
+            available[:50],
+        )
+        return False
+
     def setup_driver(self):
         chrome_options = Options()
         chrome_options.add_argument("--headless")
@@ -62,53 +166,82 @@ class AppointmentChecker:
             logging.info("Navigated to appointment website")
 
             # Step 1: Select Office (TEHERAN in this case)
-            office_select = Select(self.wait.until(
-                EC.presence_of_element_located((By.ID, "Office"))
-            ))
-            office_select.select_by_visible_text("TEHERAN")
+            self.driver.switch_to.default_content()
+            if not self._select_option_fuzzy_with_retry("Office", "TEHERAN"):  # BAKU
+                return False, []
             logging.info("Selected office: TEHERAN")
 
             # Check for iframes
             iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
             if iframes:
-                logging.info("Switching to iframe")
-                self.driver.switch_to.frame(iframes[0])  # Switch to the first iframe
+                logging.info("Iframes detected on page")
 
             # Click Next
-            next_button = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, btn_value)))
-            next_button.click()
+            if not self._click_css_any_context(btn_value):
+                raise StaleElementReferenceException("Failed to click Next button due to stale element")
             logging.info("Selected office and proceeded to next step")
 
             # Step 2: Select Visa Type
-            visa_select = Select(self.wait.until(
-                EC.presence_of_element_located((By.ID, "CalendarId"))
-            ))
-            visa_select.select_by_value("13713913")  # Residence permit
+            visa_value = "13713913"
+            visa_select = self._get_select_by_id_with_retry("CalendarId")
+            try:
+                has_value = any((opt.get_attribute("value") == visa_value) for opt in visa_select.options)
+            except StaleElementReferenceException:
+                has_value = False
+
+            if has_value:
+                for _ in range(3):
+                    try:
+                        self._get_select_by_id_with_retry("CalendarId", attempts=1).select_by_value(visa_value)
+                        break
+                    except StaleElementReferenceException:
+                        continue
+                else:
+                    return False, []
+            else:
+                if not self._select_option_fuzzy_with_retry(
+                    "CalendarId",
+                    "Residence permit – NO STUDENTS / PUPILS",
+                ): #Antrag Aufenthaltstitel / application permanent residence
+                    return False, []
             logging.info("Selected visa type: Residence permit")
 
             # Click Next
-            next_button = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, btn_value)))
-            next_button.click()
+            if not self._click_css_any_context(btn_value):
+                raise StaleElementReferenceException("Failed to click Next button due to stale element")
             logging.info("Selected visa type and proceeded to next step")
 
             # Step 3: Click through pages
-            self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, btn_value))).click()
+            if not self._click_css_any_context(btn_value):
+                raise StaleElementReferenceException("Failed to click Next button due to stale element")
             logging.info("Proceeded through Number person page")
 
-            self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, btn_value))).click()
+            if not self._click_css_any_context(btn_value):
+                raise StaleElementReferenceException("Failed to click Next button due to stale element")
             logging.info("Proceeded through information page")
 
             # Step 4: Check for available appointments
             try:
-                radio_buttons = self.wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "input[type='radio']")))
+                for _ in range(3):
+                    try:
+                        radio_buttons = self.wait.until(
+                            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "input[type='radio']"))
+                        )
 
-                if radio_buttons:
-                    available_times = []
-                    for radio in radio_buttons:
-                        label = self.driver.find_element(By.CSS_SELECTOR, f"label[for='{radio.get_attribute('id')}']")
-                        available_times.append(f"{label.text} on {radio.get_attribute('value')}")
+                        if not radio_buttons:
+                            return False, []
 
-                    return True, available_times
+                        available_times = []
+                        for radio in radio_buttons:
+                            radio_id = radio.get_attribute("id")
+                            radio_value = radio.get_attribute("value")
+                            label = self.driver.find_element(By.CSS_SELECTOR, f"label[for='{radio_id}']")
+                            available_times.append(f"{label.text} on {radio_value}")
+
+                        return True, available_times
+                    except StaleElementReferenceException:
+                        continue
+
                 return False, []
 
             except TimeoutException:
