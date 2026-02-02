@@ -23,9 +23,8 @@ load_dotenv()
 
 
 # Configure logging------------------------------------------------------------------------------------
-#logging.basicConfig(level=logging.INFO,
-   #                format='%(asctime)s - %(levelname)s - %(message)s',
-      #             filename='appointment_checker.log')
+logging.basicConfig(level=logging.INFO,
+                   format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Configure logging------------------------------------------------------------------------------------
 
@@ -183,6 +182,7 @@ class AppointmentChecker:
 
             # Step 2: Select Visa Type
             visa_value = "13713913"
+            visa_text = "Residence permit - NO STUDENTS / PUPILS but including dependents (spouses and children) of students"
             visa_select = self._get_select_by_id_with_retry("CalendarId")
             try:
                 has_value = any((opt.get_attribute("value") == visa_value) for opt in visa_select.options)
@@ -201,7 +201,7 @@ class AppointmentChecker:
             else:
                 if not self._select_option_fuzzy_with_retry(
                     "CalendarId",
-                    "Residence permit – NO STUDENTS / PUPILS",
+                    visa_text,
                 ): #Antrag Aufenthaltstitel / application permanent residence
                     return False, []
             logging.info("Selected visa type: Residence permit")
