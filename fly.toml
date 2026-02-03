@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for bots-empty-sun-9292 on 2025-02-15T11:49:49+01:00
+# fly.toml app configuration file for appointment checker bot
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -7,20 +7,24 @@ app = 'bots-empty-sun-9292'
 primary_region = 'fra'
 
 [build]
+  dockerfile = "./Dockerfile"
+
+[env]
+  # Ensure bot runs in headless mode
+  LOG_LEVEL = "INFO"
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = false  # Prevents bot from stopping
+  auto_stop_machines = false  # Keeps bot running 24/7
   auto_start_machines = true
-  min_machines_running = 1    # Ensures bot is always running
+  min_machines_running = 1    # Always run at least 1 instance
 
 [[vm]]
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
 
-
 [mounts]
-source="my_app_data"
-destination="/app/data"
+  source = "my_app_data"
+  destination = "/app/data"
