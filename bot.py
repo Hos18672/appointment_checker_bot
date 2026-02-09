@@ -130,6 +130,28 @@ class AppointmentChecker:
         self.check_count = 0  # how many polling cycles so far
 
     # ─── PERSONAL DATA FOR PERSON 1 ──────────────────────────────────────
+    PERSONAL_DATA_Test = {
+        "Lastname":                       "Rez1",
+        "Firstname":                      "Foru",
+        "DateOfBirth":                    "3/24/1998",
+        "TraveldocumentNumber":           "A05526751",
+        "Sex":                            "2",
+        "Street":                         "Taster Street 123",
+        "Postcode":                       "1312378458",
+        "City":                           "Teheran",
+        "Country":                        "102",
+        "Telephone":                      "+989933664545",
+        "Email":                          "rezahosseiniafg3@gmail.com",
+        "LastnameAtBirth":                "Rez1",
+        "NationalityAtBirth":             "1",
+        "CountryOfBirth":                 "1",
+        "PlaceOfBirth":                   "Teheran",
+        "NationalityForApplication":      "1",
+        "TraveldocumentDateOfIssue":      "02/13/2022",
+        "TraveldocumentValidUntil":       "02/13/2030",
+        "TraveldocumentIssuingAuthority": "1",
+    }
+
     PERSONAL_DATA_1 = {
         "Lastname":                       "Rezaei",
         "Firstname":                      "Firouzeh",
@@ -175,7 +197,7 @@ class AppointmentChecker:
         "TraveldocumentIssuingAuthority": "1",
     }
 
-    ALL_PERSONS = [PERSONAL_DATA_1, PERSONAL_DATA_2]
+    ALL_PERSONS = [PERSONAL_DATA_Test] #, PERSONAL_DATA_1, PERSONAL_DATA_2]
 
     def _get_person_label(self, index: int = None) -> str:
         if index is None:
@@ -1112,7 +1134,7 @@ class AppointmentChecker:
             logging.info("Navigated to appointment website")
 
             self.driver.switch_to.default_content()
-            if not self._select_option_fuzzy_with_retry("Office", "TEHERAN"):
+            if not self._select_option_fuzzy_with_retry("Office", "BAKU"):
                 return False
             logging.info("Selected office: TEHERAN")
 
@@ -1121,8 +1143,8 @@ class AppointmentChecker:
             logging.info("→ Next")
 
             # Step 2: Visa type
-            visa_value = "13713913"
-            visa_text = "Residence permit - NO STUDENTS / PUPILS but including dependents (spouses and children) of students"
+            visa_value ="24533100" #"13713913"
+            visa_text = "Beglaubigung / Apostille" #"Residence permit - NO STUDENTS / PUPILS but including dependents (spouses and children) of students"
 
             try:
                 visa_select = self._get_select_by_id_with_retry("CalendarId")
