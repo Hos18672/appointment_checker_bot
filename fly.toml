@@ -1,26 +1,25 @@
-# fly.toml app configuration file generated for bots-empty-sun-9292 on 2025-02-15T11:49:49+01:00
+# fly.toml app configuration file generated for bots-test-env on 2026-02-07T19:26:45+01:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'bots-empty-sun-9292'
+app = 'bots-test-env'
 primary_region = 'fra'
 
 [build]
 
+[[mounts]]
+  source = 'my_app_data'
+  destination = '/app/data'
+
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = false  # Prevents bot from stopping
+  auto_stop_machines = 'off'
   auto_start_machines = true
-  min_machines_running = 1    # Ensures bot is always running
+  min_machines_running = 1
 
 [[vm]]
   memory = '1gb'
-  cpu_kind = 'shared'
   cpus = 1
-
-
-[mounts]
-source="my_app_data"
-destination="/app/data"
+  memory_mb = 1024

@@ -1,4 +1,5 @@
 selenium
 aiogram
-Flask
 python-dotenv
+google-generativeai
+Pillow
