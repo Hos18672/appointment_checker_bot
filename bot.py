@@ -3,12 +3,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import (
-    TimeoutException,
-    NoSuchElementException,
-    StaleElementReferenceException,
-    WebDriverException,
-)
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 import time
@@ -17,7 +12,6 @@ import logging
 import re
 import difflib
 import warnings
-import subprocess
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import InputFile, FSInputFile, Message
 from aiogram.filters import Command
@@ -34,32 +28,25 @@ try:
     GEMINI_AVAILABLE = True
 except ImportError as e:
     GEMINI_AVAILABLE = False
-    logging.warning(
-        f"Gemini or PIL not installed. CAPTCHA solving will be disabled. Error: {e}"
-    )
+    logging.warning(f"Gemini or PIL not installed. CAPTCHA solving will be disabled. Error: {e}")
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO,
+                   format='%(asctime)s - %(levelname)s - %(message)s')
 
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-TEST_FILL_ONLY_CAPTCHA = os.getenv("TEST_FILL_ONLY_CAPTCHA", "false").lower() in (
-    "1",
-    "true",
-    "yes",
-)
+TEST_FILL_ONLY_CAPTCHA = os.getenv("TEST_FILL_ONLY_CAPTCHA", "false").lower() in ("1", "true", "yes")
 
 checker_instance = None
 main_loop = None
 
 # ─── Polling interval in seconds ───
-CHECK_INTERVAL_SECONDS = 60  # 1 minute
+CHECK_INTERVAL_SECONDS = 60  # 1 minutes
 
 
 def parse_and_format_date(raw: str) -> str:
@@ -119,9 +106,7 @@ def parse_and_format_date(raw: str) -> str:
         7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31,
     }
     if day > days_in_month.get(month, 31):
-        raise ValueError(
-            f"Day {day} is too large for month {month} in date '{raw}'."
-        )
+        raise ValueError(f"Day {day} is too large for month {month} in date '{raw}'.")
 
     formatted = f"{day:02d}.{month:02d}.{year}"
     if formatted != raw:
@@ -132,88 +117,87 @@ def parse_and_format_date(raw: str) -> str:
 class AppointmentChecker:
     def __init__(self):
         self.url = "https://appointment.bmeia.gv.at"
-        self.driver = None
-        self.wait = None
         self.setup_driver()
+        self.wait = WebDriverWait(self.driver, 10)
         self.screenshot_path = "filled_form_with_captcha.png"
         self.confirmation_screenshot_path = "confirmation_page.png"
         self.manual_captcha_queue = asyncio.Queue()
         self.waiting_for_manual_captcha = False
         self.current_person_index = 0
         # ─── Track which persons have been booked ───
-        self.persons_booked = []
-        self.booking_results = []
-        self.check_count = 0
+        self.persons_booked = []  # list of booleans, one per person
+        self.booking_results = []  # store results per person
+        self.check_count = 0  # how many polling cycles so far
 
     # ─── PERSONAL DATA FOR PERSON 1 ──────────────────────────────────────
     PERSONAL_DATA_Test = {
-        "Lastname": "Rez1",
-        "Firstname": "Foru",
-        "DateOfBirth": "3/24/1998",
-        "TraveldocumentNumber": "A05526751",
-        "Sex": "2",
-        "Street": "Taster Street 123",
-        "Postcode": "1312378458",
-        "City": "Teheran",
-        "Country": "102",
-        "Telephone": "+989933664545",
-        "Email": "rezahosseiniafg3@gmail.com",
-        "LastnameAtBirth": "Rez1",
-        "NationalityAtBirth": "1",
-        "CountryOfBirth": "1",
-        "PlaceOfBirth": "Teheran",
-        "NationalityForApplication": "1",
-        "TraveldocumentDateOfIssue": "02/13/2022",
-        "TraveldocumentValidUntil": "02/13/2030",
+        "Lastname":                       "Rez1",
+        "Firstname":                      "Foru",
+        "DateOfBirth":                    "3/24/1998",
+        "TraveldocumentNumber":           "A05526751",
+        "Sex":                            "2",
+        "Street":                         "Taster Street 123",
+        "Postcode":                       "1312378458",
+        "City":                           "Teheran",
+        "Country":                        "102",
+        "Telephone":                      "+989933664545",
+        "Email":                          "rezahosseiniafg3@gmail.com",
+        "LastnameAtBirth":                "Rez1",
+        "NationalityAtBirth":             "1",
+        "CountryOfBirth":                 "1",
+        "PlaceOfBirth":                   "Teheran",
+        "NationalityForApplication":      "1",
+        "TraveldocumentDateOfIssue":      "02/13/2022",
+        "TraveldocumentValidUntil":       "02/13/2030",
         "TraveldocumentIssuingAuthority": "1",
     }
 
     PERSONAL_DATA_1 = {
-        "Lastname": "Rezaei",
-        "Firstname": "Firouzeh",
-        "DateOfBirth": "3/20/1996",
-        "TraveldocumentNumber": "P06128950",
-        "Sex": "2",
-        "Street": "Shora",
-        "Postcode": "3313778468",
-        "City": "Teheran",
-        "Country": "102",
-        "Telephone": "+989963669985",
-        "Email": "rezahosseiniafg@gmail.com",
-        "LastnameAtBirth": "Rezaei",
-        "NationalityAtBirth": "1",
-        "CountryOfBirth": "1",
-        "PlaceOfBirth": "Teheran",
-        "NationalityForApplication": "1",
-        "TraveldocumentDateOfIssue": "04/23/2024",
-        "TraveldocumentValidUntil": "04/23/2029",
+        "Lastname":                       "Rezaei",
+        "Firstname":                      "Firouzeh",
+        "DateOfBirth":                    "3/20/1996",
+        "TraveldocumentNumber":           "P06128950",
+        "Sex":                            "2",
+        "Street":                         "Shora",
+        "Postcode":                       "3313778468",
+        "City":                           "Teheran",
+        "Country":                        "102",
+        "Telephone":                      "+989963669985",
+        "Email":                          "rezahosseiniafg@gmail.com",
+        "LastnameAtBirth":                "Rezaei",
+        "NationalityAtBirth":             "1",
+        "CountryOfBirth":                 "1",
+        "PlaceOfBirth":                   "Teheran",
+        "NationalityForApplication":      "1",
+        "TraveldocumentDateOfIssue":      "04/23/2024",
+        "TraveldocumentValidUntil":       "04/23/2029",
         "TraveldocumentIssuingAuthority": "1",
     }
 
     # ─── PERSONAL DATA FOR PERSON 2 ──────────────────────────────────────
     PERSONAL_DATA_2 = {
-        "Lastname": "AHMADI",
-        "Firstname": "RAZIA",
-        "DateOfBirth": "18/05/1998",
-        "TraveldocumentNumber": "P06128382",
-        "Sex": "1",
-        "Street": "Shahid Ali Koohkhil St, Plack 0",
-        "Postcode": "3161679743",
-        "City": "Alborz",
-        "Country": "102",
-        "Telephone": "+989020656955",
-        "Email": "hassan.nazary@gmx.at",
-        "LastnameAtBirth": "AHMADI",
-        "NationalityAtBirth": "1",
-        "CountryOfBirth": "1",
-        "PlaceOfBirth": "Daykundi",
-        "NationalityForApplication": "1",
-        "TraveldocumentDateOfIssue": "18/03/2024",
-        "TraveldocumentValidUntil": "18/03/2029",
+        "Lastname":                       "AHMADI",
+        "Firstname":                      "RAZIA",
+        "DateOfBirth":                    "18/05/1998",
+        "TraveldocumentNumber":           "P06128382",
+        "Sex":                            "1",               # 1=Female, 2=Male
+        "Street":                         "Shahid Ali Koohkhil St, Plack 0",
+        "Postcode":                       "3161679743",
+        "City":                           "Alborz",
+        "Country":                        "102",
+        "Telephone":                      "+989020656955",
+        "Email":                          "hassan.nazary@gmx.at",
+        "LastnameAtBirth":                "AHMADI",
+        "NationalityAtBirth":             "1",
+        "CountryOfBirth":                 "1",
+        "PlaceOfBirth":                   "Daykundi",
+        "NationalityForApplication":      "1",
+        "TraveldocumentDateOfIssue":      "18/03/2024",
+        "TraveldocumentValidUntil":       "18/03/2029",
         "TraveldocumentIssuingAuthority": "1",
     }
 
-    ALL_PERSONS = [PERSONAL_DATA_Test]
+    ALL_PERSONS = [PERSONAL_DATA_1, PERSONAL_DATA_2]
 
     def _get_person_label(self, index: int = None) -> str:
         if index is None:
@@ -222,11 +206,11 @@ class AppointmentChecker:
         return f"Person {index + 1} ({data['Firstname']} {data['Lastname']})"
 
     def _all_persons_booked(self) -> bool:
-        return len(self.persons_booked) == len(self.ALL_PERSONS) and all(
-            self.persons_booked
-        )
+        """Return True when every person has been successfully booked."""
+        return len(self.persons_booked) == len(self.ALL_PERSONS) and all(self.persons_booked)
 
     def _get_unbooked_indices(self) -> list:
+        """Return list of person indices that still need booking."""
         unbooked = []
         for i in range(len(self.ALL_PERSONS)):
             if i >= len(self.persons_booked) or not self.persons_booked[i]:
@@ -248,7 +232,7 @@ class AppointmentChecker:
                 f"🤖 Automatic CAPTCHA solving failed for {person_label}.\n\n"
                 "Please look at the CAPTCHA image and send me the code.\n"
                 "Format: Just send the letters/numbers you see (e.g., 'ABC123')\n"
-                "⏰ You have 2 minutes to respond."
+                "⏰ You have 1 minutes to respond."
             )
             await bot.send_message(CHAT_ID, msg)
 
@@ -256,9 +240,7 @@ class AppointmentChecker:
             if os.path.exists(captcha_image_path):
                 try:
                     photo = FSInputFile(captcha_image_path)
-                    await bot.send_photo(
-                        CHAT_ID, photo, caption="👆 Enter this CAPTCHA code"
-                    )
+                    await bot.send_photo(CHAT_ID, photo, caption="👆 Enter this CAPTCHA code")
                     sent_image = True
                 except Exception as e:
                     logging.error(f"Failed to send CAPTCHA image: {e}")
@@ -266,27 +248,20 @@ class AppointmentChecker:
             if not sent_image and os.path.exists(self.screenshot_path):
                 try:
                     photo = FSInputFile(self.screenshot_path)
-                    await bot.send_photo(
-                        CHAT_ID,
-                        photo,
-                        caption="👆 CAPTCHA visible in form. Please send the code.",
-                    )
+                    await bot.send_photo(CHAT_ID, photo,
+                                         caption="👆 CAPTCHA visible in form. Please send the code.")
                 except Exception as e:
                     logging.error(f"Failed to send fallback screenshot: {e}")
 
             logging.info("Waiting for manual CAPTCHA input (max 2 min)...")
 
             try:
-                manual_code = await asyncio.wait_for(
-                    self.manual_captcha_queue.get(), timeout=120
-                )
+                manual_code = await asyncio.wait_for(self.manual_captcha_queue.get(), timeout=120)
                 logging.info(f"Received manual CAPTCHA: {manual_code}")
                 return manual_code.strip().upper()
             except asyncio.TimeoutError:
                 logging.error("Timeout waiting for manual CAPTCHA input")
-                await bot.send_message(
-                    CHAT_ID, "⏰ Timeout! No CAPTCHA received in 2 minutes."
-                )
+                await bot.send_message(CHAT_ID, "⏰ Timeout! No CAPTCHA received in 1 minutes.")
                 return ""
 
         except Exception as e:
@@ -359,43 +334,32 @@ class AppointmentChecker:
         def _looks_like_real_error(text: str) -> bool:
             lower = text.strip().lower()
             error_indicators = [
-                "fehlt", "fehlerhaft", "ungültig", "erforderlich",
-                "stimmt nicht", "nicht überein", "ist nicht gültig",
-                "bitte geben", "bitte wählen", "pflichtfeld",
-                "muss ausgefüllt", "darf nicht leer",
-                "is required", "is not valid", "is invalid",
-                "does not match", "is incorrect", "cannot be empty",
-                "must be", "please enter", "please select", "missing",
-                "erroneous", "error", "failed", "validation", "not match",
+                "fehlt", "fehlerhaft", "ungültig", "erforderlich", "stimmt nicht",
+                "nicht überein", "ist nicht gültig", "bitte geben", "bitte wählen",
+                "pflichtfeld", "muss ausgefüllt", "darf nicht leer",
+                "is required", "is not valid", "is invalid", "does not match",
+                "is incorrect", "cannot be empty", "must be", "please enter",
+                "please select", "missing", "erroneous", "error", "failed",
+                "validation", "not match",
                 "text aus dem bild", "text from the picture",
-                "folgende angaben fehlen",
-                "following information is missing",
+                "folgende angaben fehlen", "following information is missing",
             ]
             return any(indicator in lower for indicator in error_indicators)
 
         try:
-            for sel in [
-                ".validation-summary-errors li",
-                "div.validation-summary-errors ul li",
-            ]:
+            for sel in [".validation-summary-errors li", "div.validation-summary-errors ul li"]:
                 for el in self.driver.find_elements(By.CSS_SELECTOR, sel):
                     txt = el.text.strip()
                     if txt and txt not in all_error_texts and not _is_noise(txt):
                         all_error_texts.append(txt)
             try:
-                for container in self.driver.find_elements(
-                    By.CSS_SELECTOR, ".validation-summary-errors"
-                ):
+                for container in self.driver.find_elements(By.CSS_SELECTOR, ".validation-summary-errors"):
                     full_text = container.text.strip()
                     if full_text and _looks_like_real_error(full_text):
                         for line in full_text.splitlines():
                             line = line.strip()
-                            if (
-                                line
-                                and line not in all_error_texts
-                                and not _is_noise(line)
-                                and _looks_like_real_error(line)
-                            ):
+                            if (line and line not in all_error_texts
+                                    and not _is_noise(line) and _looks_like_real_error(line)):
                                 all_error_texts.append(line)
             except Exception:
                 pass
@@ -403,10 +367,7 @@ class AppointmentChecker:
             pass
 
         try:
-            for sel in [
-                "span.field-validation-error",
-                ".field-validation-error",
-            ]:
+            for sel in ["span.field-validation-error", ".field-validation-error"]:
                 for el in self.driver.find_elements(By.CSS_SELECTOR, sel):
                     txt = el.text.strip()
                     if txt and txt not in all_error_texts and not _is_noise(txt):
@@ -418,12 +379,8 @@ class AppointmentChecker:
             for sel in [".alert-danger", ".alert-error"]:
                 for el in self.driver.find_elements(By.CSS_SELECTOR, sel):
                     txt = el.text.strip()
-                    if (
-                        txt
-                        and txt not in all_error_texts
-                        and not _is_noise(txt)
-                        and _looks_like_real_error(txt)
-                    ):
+                    if (txt and txt not in all_error_texts
+                            and not _is_noise(txt) and _looks_like_real_error(txt)):
                         all_error_texts.append(txt)
         except Exception:
             pass
@@ -431,14 +388,10 @@ class AppointmentChecker:
         try:
             error_inputs = self.driver.find_elements(
                 By.CSS_SELECTOR,
-                "input.input-validation-error, select.input-validation-error",
+                "input.input-validation-error, select.input-validation-error"
             )
             for inp in error_inputs:
-                field_name = (
-                    inp.get_attribute("name")
-                    or inp.get_attribute("id")
-                    or "unknown-field"
-                )
+                field_name = inp.get_attribute("name") or inp.get_attribute("id") or "unknown-field"
                 field_val = inp.get_attribute("value") or "(empty)"
                 msg = f"Field '{field_name}' has validation error (current value: '{field_val}')"
                 if msg not in all_error_texts:
@@ -449,24 +402,20 @@ class AppointmentChecker:
         result["raw_errors"] = list(all_error_texts)
 
         captcha_keywords = [
-            "captcha", "sicherheitscode", "security code",
-            "verification code", "text from the picture",
-            "text aus dem bild", "bild stimmt nicht",
-            "does not match", "code is incorrect",
-            "code is invalid", "stimmt nicht mit ihrer eingabe",
-            "nicht überein", "captchatext",
+            "captcha", "sicherheitscode", "security code", "verification code",
+            "text from the picture", "text aus dem bild",
+            "bild stimmt nicht", "does not match",
+            "code is incorrect", "code is invalid",
+            "stimmt nicht mit ihrer eingabe", "nicht überein", "captchatext",
         ]
         captcha_field_patterns = [
-            r"field\s*'?\s*captcha",
-            r"captcha.*validation\s*error",
-            r"captchatext",
+            r"field\s*'?\s*captcha", r"captcha.*validation\s*error", r"captchatext",
         ]
         field_keywords = [
             "is not valid", "is required", "ist erforderlich", "fehlt",
             "missing", "erroneous", "invalid", "ungültig", "pflichtfeld",
-            "muss ausgefüllt", "darf nicht leer", "bitte geben",
-            "bitte wählen", "please enter", "please select",
-            "cannot be empty",
+            "muss ausgefüllt", "darf nicht leer", "bitte geben", "bitte wählen",
+            "please enter", "please select", "cannot be empty",
         ]
 
         for txt in all_error_texts:
@@ -505,17 +454,11 @@ class AppointmentChecker:
             for i, e in enumerate(errors["raw_errors"], 1):
                 logging.error(f"  [{i}] {e}")
             if errors["captcha_errors"]:
-                logging.error(
-                    f"  → CAPTCHA errors: {errors['captcha_errors']}"
-                )
+                logging.error(f"  → CAPTCHA errors: {errors['captcha_errors']}")
             if errors["field_errors"]:
-                logging.error(
-                    f"  → Field errors: {errors['field_errors']}"
-                )
+                logging.error(f"  → Field errors: {errors['field_errors']}")
             if errors["general_errors"]:
-                logging.error(
-                    f"  → General errors: {errors['general_errors']}"
-                )
+                logging.error(f"  → General errors: {errors['general_errors']}")
             if self._is_only_captcha_error(errors):
                 logging.info("  ✓ ONLY CAPTCHA errors — will retry")
             logging.error("═══════════════════════════")
@@ -525,10 +468,9 @@ class AppointmentChecker:
 
     def _has_date_field_errors(self, errors: dict) -> bool:
         date_fields = [
-            "dateofbirth", "traveldocumentdateofissue",
-            "traveldocumentvaliduntil", "date of birth",
-            "date of issue", "valid until", "datum",
-            "geburtsdatum", "ausstellungsdatum", "gültig bis",
+            "dateofbirth", "traveldocumentdateofissue", "traveldocumentvaliduntil",
+            "date of birth", "date of issue", "valid until",
+            "datum", "geburtsdatum", "ausstellungsdatum", "gültig bis",
         ]
         for txt in errors["field_errors"] + errors["general_errors"]:
             lower = txt.lower()
@@ -538,9 +480,7 @@ class AppointmentChecker:
 
     # ─── CAPTCHA SUBMISSION ──────────────────────────────────────────────
 
-    async def _submit_form_with_captcha_handling(
-        self, max_auto_attempts: int = 3
-    ) -> tuple:
+    async def _submit_form_with_captcha_handling(self, max_auto_attempts: int = 3) -> tuple:
         captcha_retry_count = 0
         max_captcha_retries = 3
         auto_attempts_failed = 0
@@ -550,9 +490,7 @@ class AppointmentChecker:
         while attempt < max_total_attempts:
             attempt += 1
             person_label = self._get_person_label()
-            logging.info(
-                f"=== FORM SUBMISSION ATTEMPT {attempt} for {person_label} ==="
-            )
+            logging.info(f"=== FORM SUBMISSION ATTEMPT {attempt} for {person_label} ===")
 
             if auto_attempts_failed >= max_auto_attempts:
                 logging.info("Switching to manual CAPTCHA input...")
@@ -563,30 +501,19 @@ class AppointmentChecker:
                 if not self._capture_captcha_screenshot(manual_captcha_path):
                     manual_captcha_path = self.screenshot_path
 
-                manual_code = await self._request_manual_captcha(
-                    manual_captcha_path
-                )
+                manual_code = await self._request_manual_captcha(manual_captcha_path)
                 if not manual_code:
-                    return (
-                        False,
-                        "Timeout waiting for manual CAPTCHA input",
-                        None,
-                    )
+                    return False, "Timeout waiting for manual CAPTCHA input", None
 
                 try:
-                    captcha_input = self.driver.find_element(
-                        By.ID, "CaptchaText"
-                    )
+                    captcha_input = self.driver.find_element(By.ID, "CaptchaText")
                     captcha_input.clear()
                     time.sleep(0.3)
                     captcha_input.send_keys(manual_code)
                 except Exception as e:
                     return False, f"Failed to fill manual CAPTCHA: {e}", None
             else:
-                logging.info(
-                    f"Automatic CAPTCHA attempt "
-                    f"{auto_attempts_failed + 1}/{max_auto_attempts}"
-                )
+                logging.info(f"Automatic CAPTCHA attempt {auto_attempts_failed + 1}/{max_auto_attempts}")
                 captcha_img_path = f"captcha_auto_{auto_attempts_failed}.png"
                 if not self._capture_captcha_screenshot(captcha_img_path):
                     auto_attempts_failed += 1
@@ -596,9 +523,7 @@ class AppointmentChecker:
                     time.sleep(2)
                     continue
 
-                captcha_text = self._verify_captcha_text(
-                    captcha_img_path, max_retries=2
-                )
+                captcha_text = self._verify_captcha_text(captcha_img_path, max_retries=2)
                 if not captcha_text:
                     auto_attempts_failed += 1
                     if auto_attempts_failed >= max_auto_attempts:
@@ -608,13 +533,11 @@ class AppointmentChecker:
                     continue
 
                 try:
-                    captcha_input = self.driver.find_element(
-                        By.ID, "CaptchaText"
-                    )
+                    captcha_input = self.driver.find_element(By.ID, "CaptchaText")
                     captcha_input.clear()
                     time.sleep(0.3)
                     captcha_input.send_keys(captcha_text)
-                except Exception:
+                except Exception as e:
                     auto_attempts_failed += 1
                     continue
 
@@ -636,36 +559,27 @@ class AppointmentChecker:
             has_any_error = bool(errors["raw_errors"])
             only_captcha = self._is_only_captcha_error(errors)
             has_field_errors = bool(errors["field_errors"])
-            is_confirmation, confirmation_text = (
-                self._check_for_confirmation_page()
-            )
+            is_confirmation, confirmation_text = self._check_for_confirmation_page()
 
+            # CASE 1: Field errors
             if has_field_errors:
                 error_report = self._build_error_report(errors)
                 try:
-                    await bot.send_message(
-                        CHAT_ID,
-                        f"❌ {person_label}: Field errors:\n\n{error_report}",
-                    )
+                    await bot.send_message(CHAT_ID, f"❌ {person_label}: Field errors:\n\n{error_report}")
                 except Exception:
                     pass
                 return False, error_report, None
 
+            # CASE 2: CAPTCHA error only → retry
             if only_captcha and form_still_present:
                 captcha_retry_count += 1
-                logging.warning(
-                    f"CAPTCHA error – retry "
-                    f"{captcha_retry_count}/{max_captcha_retries}"
-                )
+                logging.warning(f"CAPTCHA error – retry {captcha_retry_count}/{max_captcha_retries}")
 
                 if captcha_retry_count > max_captcha_retries:
                     auto_attempts_failed = max_auto_attempts
                     try:
-                        await bot.send_message(
-                            CHAT_ID,
-                            f"⚠️ {person_label}: CAPTCHA failed "
-                            f"{max_captcha_retries}x. Manual mode...",
-                        )
+                        await bot.send_message(CHAT_ID,
+                            f"⚠️ {person_label}: CAPTCHA failed {max_captcha_retries}x. Manual mode...")
                     except Exception:
                         pass
                     attempt -= 1
@@ -700,11 +614,7 @@ class AppointmentChecker:
                     continue
 
                 if not self._click_submit_button():
-                    return (
-                        False,
-                        "Failed to click submit on CAPTCHA retry",
-                        None,
-                    )
+                    return False, "Failed to click submit on CAPTCHA retry", None
                 time.sleep(5)
 
                 current_url = self.driver.current_url
@@ -713,15 +623,11 @@ class AppointmentChecker:
                 errors = self._analyse_and_log_errors()
                 only_captcha = self._is_only_captcha_error(errors)
                 has_field_errors = bool(errors["field_errors"])
-                is_confirmation, confirmation_text = (
-                    self._check_for_confirmation_page()
-                )
+                is_confirmation, confirmation_text = self._check_for_confirmation_page()
 
                 if only_captcha and form_still_present:
                     try:
-                        self.driver.find_element(
-                            By.ID, "CaptchaText"
-                        ).clear()
+                        self.driver.find_element(By.ID, "CaptchaText").clear()
                     except Exception:
                         pass
                     continue
@@ -729,20 +635,12 @@ class AppointmentChecker:
                 if has_field_errors:
                     return False, self._build_error_report(errors), None
 
-                if (
-                    is_confirmation or url_changed
-                ) and not form_still_present:
+                if (is_confirmation or url_changed) and not form_still_present:
                     try:
-                        self.driver.save_screenshot(
-                            self.confirmation_screenshot_path
-                        )
+                        self.driver.save_screenshot(self.confirmation_screenshot_path)
                     except Exception:
                         pass
-                    return (
-                        True,
-                        confirmation_text or "Appointment confirmed",
-                        self.confirmation_screenshot_path,
-                    )
+                    return True, confirmation_text or "Appointment confirmed", self.confirmation_screenshot_path
 
                 if form_still_present and not bool(errors["raw_errors"]):
                     continue
@@ -751,27 +649,19 @@ class AppointmentChecker:
                     return False, self._build_error_report(errors), None
                 continue
 
+            # CASE 3: Confirmation
             if (is_confirmation or url_changed) and not form_still_present:
                 try:
-                    self.driver.save_screenshot(
-                        self.confirmation_screenshot_path
-                    )
+                    self.driver.save_screenshot(self.confirmation_screenshot_path)
                 except Exception:
                     pass
-                return (
-                    True,
-                    confirmation_text or "Appointment confirmed",
-                    self.confirmation_screenshot_path,
-                )
+                return True, confirmation_text or "Appointment confirmed", self.confirmation_screenshot_path
 
+            # CASE 4: Unknown errors
             if form_still_present and has_any_error:
                 error_report = self._build_error_report(errors)
                 try:
-                    await bot.send_message(
-                        CHAT_ID,
-                        f"⚠️ {person_label}: Unknown errors:"
-                        f"\n\n{error_report}",
-                    )
+                    await bot.send_message(CHAT_ID, f"⚠️ {person_label}: Unknown errors:\n\n{error_report}")
                 except Exception:
                     pass
                 return False, error_report, None
@@ -784,16 +674,10 @@ class AppointmentChecker:
 
             if url_changed and not form_still_present:
                 try:
-                    self.driver.save_screenshot(
-                        self.confirmation_screenshot_path
-                    )
+                    self.driver.save_screenshot(self.confirmation_screenshot_path)
                 except Exception:
                     pass
-                return (
-                    True,
-                    "Page changed (appointment likely confirmed)",
-                    self.confirmation_screenshot_path,
-                )
+                return True, "Page changed (appointment likely confirmed)", self.confirmation_screenshot_path
 
         return False, f"Failed after {max_total_attempts} attempts", None
 
@@ -818,9 +702,7 @@ class AppointmentChecker:
 
     def _suggest_fix(self, error_text: str) -> str:
         lower = error_text.lower()
-        if "is not valid for" in lower and (
-            "date" in lower or "traveldocument" in lower
-        ):
+        if "is not valid for" in lower and ("date" in lower or "traveldocument" in lower):
             return "Expected format: DD.MM.YYYY (e.g. 20.02.2024)."
         if "is required" in lower or "ist erforderlich" in lower:
             return "Field is required. Check PERSONAL_DATA."
@@ -835,15 +717,12 @@ class AppointmentChecker:
             "input[type='submit'][value='Weiter']",
             "input[type='submit'][value='Next']",
             "input[type='submit'][value='Submit']",
-            "button[type='submit']",
-            "#btnSubmit",
+            "button[type='submit']", "#btnSubmit",
         ]:
             try:
                 btn = self.driver.find_element(By.CSS_SELECTOR, selector)
                 if btn.is_displayed():
-                    self.driver.execute_script(
-                        "arguments[0].scrollIntoView(true);", btn
-                    )
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", btn)
                     time.sleep(0.5)
                     btn.click()
                     return True
@@ -852,20 +731,14 @@ class AppointmentChecker:
             except Exception:
                 continue
         try:
-            self.driver.execute_script(
-                "document.querySelector('form').submit();"
-            )
+            self.driver.execute_script("document.querySelector('form').submit();")
             return True
         except Exception:
             return False
 
     def _check_for_form_on_page(self) -> bool:
         try:
-            for by, value in [
-                (By.ID, "Lastname"),
-                (By.ID, "Firstname"),
-                (By.ID, "CaptchaText"),
-            ]:
+            for by, value in [(By.ID, "Lastname"), (By.ID, "Firstname"), (By.ID, "CaptchaText")]:
                 try:
                     if self.driver.find_element(by, value).is_displayed():
                         return True
@@ -881,37 +754,24 @@ class AppointmentChecker:
             page_title = self.driver.title.lower()
             indicators = [
                 "bestätigung", "termin gebucht", "appointment booked",
-                "erfolgreich gebucht", "buchung erfolgreich",
-                "booking successful",
-                "vielen dank für ihre buchung",
-                "thank you for your booking",
+                "erfolgreich gebucht", "buchung erfolgreich", "booking successful",
+                "vielen dank für ihre buchung", "thank you for your booking",
                 "referenznummer", "reference number", "buchungsnummer",
                 "booking number", "ihr termin wurde", "termin bestätigt",
                 "appointment confirmed", "successfully registered",
                 "erfolgreich registriert",
             ]
-            found = [
-                i
-                for i in indicators
-                if i in page_source or i in page_title
-            ]
+            found = [i for i in indicators if i in page_source or i in page_title]
             is_conf = len(found) > 0
             conf_text = ""
             if is_conf:
-                for pat in [
-                    r"(?:referenznummer|reference number|buchungsnummer"
-                    r"|booking number)[\s:]*([a-z0-9\-]+)"
-                ]:
+                for pat in [r"(?:referenznummer|reference number|buchungsnummer|booking number)[\s:]*([a-z0-9\-]+)"]:
                     match = re.search(pat, page_source, re.IGNORECASE)
                     if match:
-                        conf_text = (
-                            f"Confirmation: {match.group(1).upper()}"
-                        )
+                        conf_text = f"Confirmation: {match.group(1).upper()}"
                         break
                 if not conf_text:
-                    conf_text = (
-                        f"Confirmed (indicators: {', '.join(found)})"
-                    )
+                    conf_text = f"Confirmed (indicators: {', '.join(found)})"
             return is_conf, conf_text
         except Exception:
             return False, ""
@@ -925,17 +785,11 @@ class AppointmentChecker:
                 (By.CLASS_NAME, "BDC_ReloadLink"),
                 (By.CSS_SELECTOR, "a[id*='ReloadLink']"),
                 (By.CSS_SELECTOR, "a[title*='Change the CAPTCHA']"),
-                (
-                    By.CSS_SELECTOR,
-                    "#Captcha_CaptchaIconsDiv a:first-child",
-                ),
+                (By.CSS_SELECTOR, "#Captcha_CaptchaIconsDiv a:first-child"),
                 (By.XPATH, "//a[contains(@id, 'ReloadLink')]"),
                 (By.XPATH, "//a[contains(@title, 'Change')]"),
                 (By.XPATH, "//a[contains(@title, 'CAPTCHA')]"),
-                (
-                    By.XPATH,
-                    "//img[contains(@id, 'ReloadIcon')]/parent::a",
-                ),
+                (By.XPATH, "//img[contains(@id, 'ReloadIcon')]/parent::a"),
             ]
             reload_btn = None
             for by, sel in refresh_selectors:
@@ -950,16 +804,11 @@ class AppointmentChecker:
 
             old_src = None
             try:
-                old_src = self.driver.find_element(
-                    By.ID, "Captcha_CaptchaImage"
-                ).get_attribute("src")
+                old_src = self.driver.find_element(By.ID, "Captcha_CaptchaImage").get_attribute("src")
             except Exception:
                 pass
 
-            self.driver.execute_script(
-                "arguments[0].scrollIntoView({block:'center'});",
-                reload_btn,
-            )
+            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", reload_btn)
             time.sleep(0.5)
             self.driver.execute_script("arguments[0].click();", reload_btn)
 
@@ -967,9 +816,7 @@ class AppointmentChecker:
                 for i in range(10):
                     time.sleep(0.5)
                     try:
-                        new_src = self.driver.find_element(
-                            By.ID, "Captcha_CaptchaImage"
-                        ).get_attribute("src")
+                        new_src = self.driver.find_element(By.ID, "Captcha_CaptchaImage").get_attribute("src")
                         if new_src != old_src:
                             time.sleep(1.5)
                             return True
@@ -992,16 +839,10 @@ class AppointmentChecker:
                 try:
                     elem = self.driver.find_element(by, sel)
                     if elem.is_displayed():
-                        self.driver.execute_script(
-                            "arguments[0].scrollIntoView({block:'center'});",
-                            elem,
-                        )
+                        self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", elem)
                         time.sleep(0.5)
                         elem.screenshot(image_path)
-                        if (
-                            os.path.exists(image_path)
-                            and os.path.getsize(image_path) > 0
-                        ):
+                        if os.path.exists(image_path) and os.path.getsize(image_path) > 0:
                             return True
                 except Exception:
                     continue
@@ -1036,17 +877,12 @@ class AppointmentChecker:
                 "Example: 'ABC123'. No explanation, no formatting."
             )
             for model_name in models:
-                if (
-                    "gemma" in model_name.lower()
-                    and "it" in model_name.lower()
-                ):
+                if 'gemma' in model_name.lower() and 'it' in model_name.lower():
                     continue
                 try:
                     model = genai.GenerativeModel(model_name)
                     response = model.generate_content([prompt, image])
-                    cleaned = self._clean_captcha_text(
-                        response.text.strip()
-                    )
+                    cleaned = self._clean_captcha_text(response.text.strip())
                     if cleaned:
                         return cleaned
                 except Exception:
@@ -1055,9 +891,7 @@ class AppointmentChecker:
         except Exception:
             return ""
 
-    def _verify_captcha_text(
-        self, image_path: str, max_retries: int = 5
-    ) -> str:
+    def _verify_captcha_text(self, image_path: str, max_retries: int = 5) -> str:
         for attempt in range(1, max_retries + 1):
             text1 = self._extract_captcha_text_gemini(image_path)
             if not text1:
@@ -1086,32 +920,20 @@ class AppointmentChecker:
             available = []
             try:
                 for model in genai.list_models():
-                    if (
-                        "generateContent"
-                        in model.supported_generation_methods
-                    ):
-                        available.append(
-                            model.name.replace("models/", "")
-                        )
+                    if 'generateContent' in model.supported_generation_methods:
+                        available.append(model.name.replace("models/", ""))
             except Exception:
                 pass
             if not available:
-                return [
-                    "gemini-2.0-flash",
-                    "gemini-1.5-flash-latest",
-                    "gemini-1.5-pro-latest",
-                    "gemini-1.5-flash",
-                    "gemini-pro-vision",
-                ]
+                return ["gemini-2.0-flash", "gemini-1.5-flash-latest",
+                        "gemini-1.5-pro-latest", "gemini-1.5-flash", "gemini-pro-vision"]
             return available
         except Exception:
             return ["gemini-1.5-flash", "gemini-pro-vision"]
 
     # ─── FILL FORM ───────────────────────────────────────────────────────
 
-    async def fill_personal_form(
-        self, person_data: dict = None
-    ) -> tuple:
+    async def fill_personal_form(self, person_data: dict = None) -> tuple:
         try:
             if person_data is None:
                 person_data = self.ALL_PERSONS[self.current_person_index]
@@ -1120,24 +942,15 @@ class AppointmentChecker:
 
             date_fields = {
                 "DateOfBirth": data["DateOfBirth"],
-                "TraveldocumentDateOfIssue": data[
-                    "TraveldocumentDateOfIssue"
-                ],
-                "TraveldocumentValidUntil": data[
-                    "TraveldocumentValidUntil"
-                ],
+                "TraveldocumentDateOfIssue": data["TraveldocumentDateOfIssue"],
+                "TraveldocumentValidUntil": data["TraveldocumentValidUntil"],
             }
             formatted_dates = {}
             for field, raw_date in date_fields.items():
                 try:
-                    formatted_dates[field] = parse_and_format_date(
-                        raw_date
-                    )
+                    formatted_dates[field] = parse_and_format_date(raw_date)
                 except ValueError as ve:
-                    error_msg = (
-                        f"❌ INVALID DATE for {person_label} "
-                        f"'{field}': {ve}"
-                    )
+                    error_msg = f"❌ INVALID DATE for {person_label} '{field}': {ve}"
                     try:
                         await bot.send_message(CHAT_ID, error_msg)
                     except Exception:
@@ -1145,9 +958,7 @@ class AppointmentChecker:
                     return False, [error_msg], None
 
             try:
-                self.wait.until(
-                    EC.presence_of_element_located((By.ID, "Lastname"))
-                )
+                self.wait.until(EC.presence_of_element_located((By.ID, "Lastname")))
             except TimeoutException:
                 return False, ["Form page did not load"], None
 
@@ -1163,14 +974,8 @@ class AppointmentChecker:
                 ("Email", data["Email"]),
                 ("LastnameAtBirth", data["LastnameAtBirth"]),
                 ("PlaceOfBirth", data["PlaceOfBirth"]),
-                (
-                    "TraveldocumentDateOfIssue",
-                    formatted_dates["TraveldocumentDateOfIssue"],
-                ),
-                (
-                    "TraveldocumentValidUntil",
-                    formatted_dates["TraveldocumentValidUntil"],
-                ),
+                ("TraveldocumentDateOfIssue", formatted_dates["TraveldocumentDateOfIssue"]),
+                ("TraveldocumentValidUntil", formatted_dates["TraveldocumentValidUntil"]),
             ]
             for elem_id, value in text_fields:
                 try:
@@ -1186,30 +991,20 @@ class AppointmentChecker:
                 ("Country", data["Country"]),
                 ("NationalityAtBirth", data["NationalityAtBirth"]),
                 ("CountryOfBirth", data["CountryOfBirth"]),
-                (
-                    "NationalityForApplication",
-                    data["NationalityForApplication"],
-                ),
-                (
-                    "TraveldocumentIssuingAuthority",
-                    data["TraveldocumentIssuingAuthority"],
-                ),
+                ("NationalityForApplication", data["NationalityForApplication"]),
+                ("TraveldocumentIssuingAuthority", data["TraveldocumentIssuingAuthority"]),
             ]
             for sel_id, val in dropdowns:
                 try:
-                    Select(
-                        self.driver.find_element(By.ID, sel_id)
-                    ).select_by_value(val)
+                    Select(self.driver.find_element(By.ID, sel_id)).select_by_value(val)
                 except Exception:
                     logging.exception(f"Failed to select {sel_id}")
 
             try:
                 self.driver.execute_script(
                     "var cb = document.getElementById('DSGVOAccepted');"
-                    "if(cb){ cb.checked=true; "
-                    "cb.dispatchEvent(new Event('change')); }"
-                    "var h = document.querySelector("
-                    "'input[name=DSGVOAccepted][type=hidden]');"
+                    "if(cb){ cb.checked=true; cb.dispatchEvent(new Event('change')); }"
+                    "var h = document.querySelector('input[name=DSGVOAccepted][type=hidden]');"
                     "if(h) h.value='true';"
                 )
             except Exception:
@@ -1220,11 +1015,7 @@ class AppointmentChecker:
             except Exception:
                 pass
 
-            success, message, screenshot = (
-                await self._submit_form_with_captcha_handling(
-                    max_auto_attempts=3
-                )
-            )
+            success, message, screenshot = await self._submit_form_with_captcha_handling(max_auto_attempts=3)
             return success, [message], screenshot
 
         except Exception as e:
@@ -1232,41 +1023,28 @@ class AppointmentChecker:
 
     # ─── NAVIGATION HELPERS ──────────────────────────────────────────────
 
-    def _click_css_with_retry(
-        self, css_selector: str, attempts: int = 3
-    ) -> bool:
+    def _click_css_with_retry(self, css_selector: str, attempts: int = 3) -> bool:
         for _ in range(attempts):
             try:
                 el = WebDriverWait(self.driver, 3).until(
-                    EC.element_to_be_clickable(
-                        (By.CSS_SELECTOR, css_selector)
-                    )
-                )
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, css_selector)))
                 el.click()
                 return True
             except (StaleElementReferenceException, TimeoutException):
                 continue
         return False
 
-    def _click_css_any_context(
-        self, css_selector: str, attempts: int = 3
-    ) -> bool:
+    def _click_css_any_context(self, css_selector: str, attempts: int = 3) -> bool:
         for _ in range(attempts):
             try:
                 self.driver.switch_to.default_content()
-                if self._click_css_with_retry(
-                    css_selector, attempts=1
-                ):
+                if self._click_css_with_retry(css_selector, attempts=1):
                     return True
-                for frame in self.driver.find_elements(
-                    By.TAG_NAME, "iframe"
-                ):
+                for frame in self.driver.find_elements(By.TAG_NAME, "iframe"):
                     try:
                         self.driver.switch_to.default_content()
                         self.driver.switch_to.frame(frame)
-                        if self._click_css_with_retry(
-                            css_selector, attempts=1
-                        ):
+                        if self._click_css_with_retry(css_selector, attempts=1):
                             return True
                     except StaleElementReferenceException:
                         continue
@@ -1276,38 +1054,22 @@ class AppointmentChecker:
                 continue
         return False
 
-    def _get_select_by_id_with_retry(
-        self, element_id: str, attempts: int = 3
-    ) -> Select:
+    def _get_select_by_id_with_retry(self, element_id: str, attempts: int = 3) -> Select:
         last_exc = None
         for _ in range(attempts):
             try:
-                el = self.wait.until(
-                    EC.presence_of_element_located((By.ID, element_id))
-                )
+                el = self.wait.until(EC.presence_of_element_located((By.ID, element_id)))
                 self.wait.until(
-                    lambda d: len(
-                        d.find_elements(
-                            By.CSS_SELECTOR, f"#{element_id} option"
-                        )
-                    )
-                    > 1
-                )
+                    lambda d: len(d.find_elements(By.CSS_SELECTOR, f"#{element_id} option")) > 1)
                 return Select(el)
             except StaleElementReferenceException as e:
                 last_exc = e
-        raise last_exc or StaleElementReferenceException(
-            f"Cannot find #{element_id}"
-        )
+        raise last_exc or StaleElementReferenceException(f"Cannot find #{element_id}")
 
-    def _select_option_fuzzy_with_retry(
-        self, element_id: str, target_text: str, attempts: int = 3
-    ) -> bool:
+    def _select_option_fuzzy_with_retry(self, element_id: str, target_text: str, attempts: int = 3) -> bool:
         for _ in range(attempts):
             try:
-                select = self._get_select_by_id_with_retry(
-                    element_id, attempts=1
-                )
+                select = self._get_select_by_id_with_retry(element_id, attempts=1)
                 return self._select_option_fuzzy(select, target_text)
             except StaleElementReferenceException:
                 continue
@@ -1319,22 +1081,15 @@ class AppointmentChecker:
         text = text.replace("\u2013", "-").replace("\u2014", "-")
         return re.sub(r"\s+", " ", text).strip().upper()
 
-    def _select_option_fuzzy(
-        self, select: Select, target_text: str
-    ) -> bool:
+    def _select_option_fuzzy(self, select: Select, target_text: str) -> bool:
         target_norm = self._normalize_visible_text(target_text)
         for option in select.options:
-            if (
-                self._normalize_visible_text(option.text)
-                == target_norm
-            ):
+            if self._normalize_visible_text(option.text) == target_norm:
                 select.select_by_visible_text(option.text)
                 return True
         for option in select.options:
             opt_norm = self._normalize_visible_text(option.text)
-            if target_norm and (
-                target_norm in opt_norm or opt_norm in target_norm
-            ):
+            if target_norm and (target_norm in opt_norm or opt_norm in target_norm):
                 select.select_by_visible_text(option.text)
                 return True
         norm_map = {}
@@ -1342,256 +1097,109 @@ class AppointmentChecker:
             n = self._normalize_visible_text(option.text)
             if n and n not in norm_map:
                 norm_map[n] = option.text
-        close = difflib.get_close_matches(
-            target_norm, list(norm_map.keys()), n=3, cutoff=0.8
-        )
+        close = difflib.get_close_matches(target_norm, list(norm_map.keys()), n=3, cutoff=0.8)
         if close:
             select.select_by_visible_text(norm_map[close[0]])
             return True
         return False
 
-    # ══════════════════════════════════════════════════════════════════════
-    #  BROWSER MANAGEMENT — FIXED FOR REPLIT MEMORY LIMITS
-    # ══════════════════════════════════════════════════════════════════════
-
     def setup_driver(self):
-        """Create a memory-optimized Chrome instance for Replit."""
-        # First, kill any leftover Chrome processes
-        self._force_kill_chrome()
-
         chrome_options = Options()
-
-        # ─── ESSENTIAL for Replit ───
-        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
-
-        # ─── MEMORY SAVING (prevents OOM crashes) ───
+        chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--disable-software-rasterizer")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-plugins")
-        chrome_options.add_argument("--disable-background-networking")
-        chrome_options.add_argument("--disable-default-apps")
-        chrome_options.add_argument("--disable-sync")
-        chrome_options.add_argument("--disable-translate")
-        chrome_options.add_argument(
-            "--disable-background-timer-throttling"
-        )
-        chrome_options.add_argument(
-            "--disable-renderer-backgrounding"
-        )
-        chrome_options.add_argument(
-            "--disable-backgrounding-occluded-windows"
-        )
-        chrome_options.add_argument(
-            "--disable-features=VizDisplayCompositor"
-        )
-        chrome_options.add_argument(
-            "--disable-features=TranslateUI"
-        )
-        chrome_options.add_argument("--disable-ipc-flooding-protection")
-        chrome_options.add_argument(
-            "--blink-settings=imagesEnabled=true"
-        )  # keep true for CAPTCHA
-
-        # ─── PROCESS / MEMORY LIMITS ───
-        chrome_options.add_argument("--single-process")
-        chrome_options.add_argument("--renderer-process-limit=1")
-        chrome_options.add_argument("--memory-pressure-off")
-        chrome_options.add_argument("--js-flags=--max-old-space-size=256")
-
-        # ─── SMALLER WINDOW = less rendering memory ───
-        chrome_options.add_argument("--window-size=1280,720")
-
-        # ─── REDUCE LOGGING NOISE ───
         chrome_options.add_argument("--log-level=3")
-
-        self.driver = webdriver.Chrome(
-            service=Service(), options=chrome_options
-        )
-
-        # ─── TIMEOUTS (prevent 120s+ hangs) ───
-        self.driver.set_page_load_timeout(60)
-        self.driver.set_script_timeout(30)
-        self.driver.implicitly_wait(5)
-
-        self.wait = WebDriverWait(self.driver, 10)
-        logging.info("✓ Chrome started with memory-optimized settings")
-
-    def _force_kill_chrome(self):
-        """Kill ALL orphaned Chrome/chromedriver processes."""
-        for proc_name in ["chrome", "chromedriver", "chromium"]:
-            try:
-                subprocess.run(
-                    ["pkill", "-9", "-f", proc_name],
-                    timeout=5,
-                    capture_output=True,
-                )
-            except Exception:
-                pass
-        time.sleep(1)
-
-    def _is_browser_alive(self) -> bool:
-        """Check if the Chrome browser is still responding."""
-        if self.driver is None:
-            return False
-        try:
-            _ = self.driver.title
-            return True
-        except Exception:
-            return False
+        self.driver = webdriver.Chrome(service=Service(), options=chrome_options)
 
     def _restart_driver(self):
-        """Safely quit and recreate the browser with full cleanup."""
-        logging.info("Restarting browser...")
-
-        # Step 1: Try graceful quit
-        if self.driver is not None:
-            try:
-                self.driver.quit()
-            except Exception:
-                pass
-            self.driver = None
-
-        # Step 2: Force kill any zombies
-        self._force_kill_chrome()
-
-        # Step 3: Wait for processes to die
-        time.sleep(2)
-
-        # Step 4: Create fresh browser
+        """Quit and recreate the browser to get a clean session."""
+        try:
+            self.driver.quit()
+        except Exception:
+            pass
         self.setup_driver()
+        self.wait = WebDriverWait(self.driver, 10)
         logging.info("✓ Browser restarted with fresh session")
 
-    # ─── NAVIGATE TO APPOINTMENT LIST (with crash recovery) ──────────────
+    # ─── NAVIGATE TO APPOINTMENT LIST ────────────────────────────────────
 
     def _navigate_to_appointment_list(self) -> bool:
-        max_nav_retries = 3
+        try:
+            btn = "input[type='submit'][value='Next'], input[type='submit'][value='Weiter']"
 
-        for nav_attempt in range(1, max_nav_retries + 1):
+            self.driver.get(self.url)
+            logging.info("Navigated to appointment website")
+
+            self.driver.switch_to.default_content()
+            if not self._select_option_fuzzy_with_retry("Office", "TEHERAN"):
+                return False
+            logging.info("Selected office: TEHERAN")
+
+            if not self._click_css_any_context(btn):
+                return False
+            logging.info("→ Next")
+
+            # Step 2: Visa type
+            visa_value ="13713913" #"24533100" 
+            visa_text =  "Residence permit - NO STUDENTS / PUPILS but including dependents (spouses and children) of students" # "Beglaubigung / Apostille"
+
             try:
-                # Check if browser is alive before navigating
-                if not self._is_browser_alive():
-                    logging.warning(
-                        f"Browser dead before navigation "
-                        f"(attempt {nav_attempt}), restarting..."
-                    )
-                    self._restart_driver()
-
-                btn = (
-                    "input[type='submit'][value='Next'], "
-                    "input[type='submit'][value='Weiter']"
-                )
-
-                self.driver.get(self.url)
-                logging.info("Navigated to appointment website")
-
-                self.driver.switch_to.default_content()
-                if not self._select_option_fuzzy_with_retry(
-                    "Office", "BAKU"
-                ):
-                    return False
-                logging.info("Selected office: TEHERAN")
-
-                if not self._click_css_any_context(btn):
-                    return False
-                logging.info("→ Next")
-
-                # Step 2: Visa type
-                visa_value = "24533100"
-                visa_text = "Beglaubigung / Apostille"
-
-                try:
-                    visa_select = (
-                        self._get_select_by_id_with_retry("CalendarId")
-                    )
-                except Exception:
-                    return False
-
-                try:
-                    has_value = any(
-                        o.get_attribute("value") == visa_value
-                        for o in visa_select.options
-                    )
-                except StaleElementReferenceException:
-                    has_value = False
-
-                if has_value:
-                    for _ in range(3):
-                        try:
-                            self._get_select_by_id_with_retry(
-                                "CalendarId", 1
-                            ).select_by_value(visa_value)
-                            break
-                        except StaleElementReferenceException:
-                            continue
-                    else:
-                        return False
-                else:
-                    if not self._select_option_fuzzy_with_retry(
-                        "CalendarId", visa_text
-                    ):
-                        return False
-
-                if not self._click_css_any_context(btn):
-                    return False
-                logging.info("→ Next (visa)")
-
-                if not self._click_css_any_context(btn):
-                    return False
-                logging.info("→ Number of persons")
-
-                if not self._click_css_any_context(btn):
-                    return False
-                logging.info("→ Information page")
-
-                return True
-
-            except (
-                WebDriverException,
-                ConnectionError,
-                OSError,
-            ) as e:
-                error_name = type(e).__name__
-                logging.error(
-                    f"Navigation attempt {nav_attempt}/{max_nav_retries} "
-                    f"failed ({error_name}): {e}"
-                )
-
-                if nav_attempt < max_nav_retries:
-                    logging.info(
-                        "Restarting browser for retry..."
-                    )
-                    self._restart_driver()
-                    time.sleep(3)
-                else:
-                    logging.error(
-                        f"Navigation failed after "
-                        f"{max_nav_retries} attempts"
-                    )
-                    return False
-
-            except Exception as e:
-                logging.error(
-                    f"Navigation error: {e}", exc_info=True
-                )
+                visa_select = self._get_select_by_id_with_retry("CalendarId")
+            except Exception:
                 return False
 
-        return False
+            try:
+                has_value = any(o.get_attribute("value") == visa_value for o in visa_select.options)
+            except StaleElementReferenceException:
+                has_value = False
 
-    # ─── CHECK IF APPOINTMENTS AVAILABLE ─────────────────────────────────
+            if has_value:
+                for _ in range(3):
+                    try:
+                        self._get_select_by_id_with_retry("CalendarId", 1).select_by_value(visa_value)
+                        break
+                    except StaleElementReferenceException:
+                        continue
+                else:
+                    return False
+            else:
+                if not self._select_option_fuzzy_with_retry("CalendarId", visa_text):
+                    return False
+
+            if not self._click_css_any_context(btn):
+                return False
+            logging.info("→ Next (visa)")
+
+            if not self._click_css_any_context(btn):
+                return False
+            logging.info("→ Number of persons")
+
+            if not self._click_css_any_context(btn):
+                return False
+            logging.info("→ Information page")
+
+            return True
+        except Exception as e:
+            logging.error(f"Navigation error: {e}", exc_info=True)
+            return False
+
+    # ─── CHECK IF APPOINTMENTS AVAILABLE (without booking) ───────────────
 
     def _check_appointments_available(self) -> tuple:
+        """
+        Check if there are any available appointment slots on the current page.
+        Returns (has_appointments: bool, radio_buttons: list)
+        """
         time.sleep(3)
 
         self.driver.switch_to.default_content()
         for frame in self.driver.find_elements(By.TAG_NAME, "iframe"):
             try:
                 self.driver.switch_to.frame(frame)
-                if self.driver.find_elements(
-                    By.CSS_SELECTOR, "input[type='radio']"
-                ):
+                if self.driver.find_elements(By.CSS_SELECTOR, "input[type='radio']"):
                     break
             except Exception:
                 self.driver.switch_to.default_content()
@@ -1607,28 +1215,18 @@ class AppointmentChecker:
             return False, []
         except TimeoutException:
             page_src = self.driver.page_source.lower()
-            if any(
-                kw in page_src
-                for kw in [
-                    "no appointments", "keine termin",
-                    "nicht verfügbar", "not available",
-                    "keine freien", "no free",
-                ]
-            ):
-                logging.info(
-                    "No appointments available (page says so)"
-                )
+            if any(kw in page_src for kw in [
+                "no appointments", "keine termin", "nicht verfügbar",
+                "not available", "keine freien", "no free"
+            ]):
+                logging.info("No appointments available (page says so)")
             else:
-                logging.info(
-                    "No appointment radio buttons found (timeout)"
-                )
+                logging.info("No appointment radio buttons found (timeout)")
             return False, []
 
     # ─── SELECT SLOT AND BOOK ────────────────────────────────────────────
 
-    async def _select_and_book_appointment(
-        self, radio_buttons
-    ) -> tuple:
+    async def _select_and_book_appointment(self, radio_buttons) -> tuple:
         person_label = self._get_person_label()
 
         for attempt in range(3):
@@ -1642,25 +1240,18 @@ class AppointmentChecker:
                 try:
                     rid = first_radio.get_attribute("id")
                     rval = first_radio.get_attribute("value")
-                    lbl = self.driver.find_element(
-                        By.CSS_SELECTOR, f"label[for='{rid}']"
-                    )
+                    lbl = self.driver.find_element(By.CSS_SELECTOR, f"label[for='{rid}']")
                     details = f"{lbl.text} on {rval}"
                 except Exception:
                     pass
 
                 try:
-                    self.driver.execute_script(
-                        "arguments[0].scrollIntoView(true);",
-                        first_radio,
-                    )
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", first_radio)
                     first_radio.click()
                 except Exception:
                     try:
-                        rid = first_radio.get_attribute("id")
-                        self.driver.find_element(
-                            By.CSS_SELECTOR, f"label[for='{rid}']"
-                        ).click()
+                        rid = first_radio.get_attribute('id')
+                        self.driver.find_element(By.CSS_SELECTOR, f"label[for='{rid}']").click()
                     except Exception:
                         if attempt < 2:
                             continue
@@ -1669,17 +1260,12 @@ class AppointmentChecker:
                 time.sleep(3)
 
                 weiter = self._click_css_any_context(
-                    "input[type='submit'][value='Weiter'], "
-                    "input[type='submit'][value='Next']"
+                    "input[type='submit'][value='Weiter'], input[type='submit'][value='Next']"
                 )
                 if not weiter:
                     try:
-                        b = self.driver.find_element(
-                            By.CSS_SELECTOR, "input[value='Next']"
-                        )
-                        self.driver.execute_script(
-                            "arguments[0].click();", b
-                        )
+                        b = self.driver.find_element(By.CSS_SELECTOR, "input[value='Next']")
+                        self.driver.execute_script("arguments[0].click();", b)
                         weiter = True
                     except Exception:
                         pass
@@ -1689,57 +1275,34 @@ class AppointmentChecker:
                 time.sleep(2)
 
                 self.driver.switch_to.default_content()
-                for frame in self.driver.find_elements(
-                    By.TAG_NAME, "iframe"
-                ):
+                for frame in self.driver.find_elements(By.TAG_NAME, "iframe"):
                     try:
                         self.driver.switch_to.frame(frame)
-                        if self.driver.find_elements(
-                            By.ID, "Lastname"
-                        ):
+                        if self.driver.find_elements(By.ID, "Lastname"):
                             break
                     except Exception:
                         self.driver.switch_to.default_content()
 
                 try:
-                    self.wait.until(
-                        EC.presence_of_element_located(
-                            (By.ID, "Lastname")
-                        )
-                    )
-                    logging.info(
-                        f"✓ Form loaded for {person_label}"
-                    )
+                    self.wait.until(EC.presence_of_element_located((By.ID, "Lastname")))
+                    logging.info(f"✓ Form loaded for {person_label}")
                 except TimeoutException:
                     return False, [], None
 
-                person_data = self.ALL_PERSONS[
-                    self.current_person_index
-                ]
-                ok, info, ss = await self.fill_personal_form(
-                    person_data
-                )
+                person_data = self.ALL_PERSONS[self.current_person_index]
+                ok, info, ss = await self.fill_personal_form(person_data)
 
                 if ok:
-                    logging.info(
-                        f"✓ Appointment booked for "
-                        f"{person_label}: {info}"
-                    )
+                    logging.info(f"✓ Appointment booked for {person_label}: {info}")
                 else:
-                    logging.error(
-                        f"Booking failed for "
-                        f"{person_label}: {info}"
-                    )
+                    logging.error(f"Booking failed for {person_label}: {info}")
                 return ok, info, ss
 
             except StaleElementReferenceException:
                 time.sleep(2)
                 continue
             except Exception as e:
-                logging.error(
-                    f"Attempt {attempt + 1} error for "
-                    f"{person_label}: {e}"
-                )
+                logging.error(f"Attempt {attempt+1} error for {person_label}: {e}")
                 if attempt < 2:
                     time.sleep(2)
                     continue
@@ -1747,9 +1310,20 @@ class AppointmentChecker:
 
         return False, [], None
 
-    # ─── SINGLE CHECK CYCLE ─────────────────────────────────────────────
+    # ─── SINGLE CHECK CYCLE (one navigation + check + possibly book) ─────
 
     async def _run_single_check_cycle(self) -> dict:
+        """
+        Run one complete check cycle:
+        1. Navigate to appointment list
+        2. Check if slots available
+        3. If yes, try to book for each unbooked person
+
+        Returns dict with:
+            'appointments_found': bool
+            'bookings_made': list of (person_index, success, info, screenshot)
+            'error': str or None
+        """
         result = {
             "appointments_found": False,
             "bookings_made": [],
@@ -1765,69 +1339,44 @@ class AppointmentChecker:
             person_label = self._get_person_label()
 
             logging.info(f"")
-            logging.info(f"{'─' * 50}")
+            logging.info(f"{'─'*50}")
             logging.info(f"  Checking for {person_label}")
-            logging.info(f"{'─' * 50}")
+            logging.info(f"{'─'*50}")
 
             try:
                 # Restart browser for clean session each attempt
                 self._restart_driver()
 
                 if not self._navigate_to_appointment_list():
-                    logging.error(
-                        f"Navigation failed for {person_label}"
-                    )
+                    logging.error(f"Navigation failed for {person_label}")
                     result["bookings_made"].append(
-                        (
-                            person_idx,
-                            False,
-                            [f"Navigation failed"],
-                            None,
-                        )
+                        (person_idx, False, [f"Navigation failed"], None)
                     )
                     continue
 
-                has_appointments, radio_buttons = (
-                    self._check_appointments_available()
-                )
+                has_appointments, radio_buttons = self._check_appointments_available()
 
                 if not has_appointments:
-                    logging.info(
-                        f"No appointments available for "
-                        f"{person_label}"
-                    )
+                    logging.info(f"No appointments available for {person_label}")
                     result["bookings_made"].append(
-                        (
-                            person_idx,
-                            False,
-                            ["No appointments available"],
-                            None,
-                        )
+                        (person_idx, False, ["No appointments available"], None)
                     )
                     continue
 
+                # Appointments found!
                 result["appointments_found"] = True
-                logging.info(
-                    f"🎉 Appointments FOUND for {person_label}!"
-                )
+                logging.info(f"🎉 Appointments FOUND for {person_label}!")
 
                 try:
                     await bot.send_message(
                         CHAT_ID,
-                        f"🎉 Appointments found! Attempting to "
-                        f"book for {person_label}...",
+                        f"🎉 Appointments found! Attempting to book for {person_label}..."
                     )
                 except Exception:
                     pass
 
-                ok, info, ss = (
-                    await self._select_and_book_appointment(
-                        radio_buttons
-                    )
-                )
-                result["bookings_made"].append(
-                    (person_idx, ok, info, ss)
-                )
+                ok, info, ss = await self._select_and_book_appointment(radio_buttons)
+                result["bookings_made"].append((person_idx, ok, info, ss))
 
                 if ok:
                     self.persons_booked[person_idx] = True
@@ -1837,56 +1386,36 @@ class AppointmentChecker:
                         person_data = self.ALL_PERSONS[person_idx]
                         msg = (
                             f"✅✅✅ {person_label} BOOKED! ✅✅✅\n\n"
-                            f"👤 {person_data['Firstname']} "
-                            f"{person_data['Lastname']}\n"
+                            f"👤 {person_data['Firstname']} {person_data['Lastname']}\n"
                             f"📧 {person_data['Email']}\n"
                         )
                         if info:
-                            msg += (
-                                f"📋 {info[0] if isinstance(info, list) else info}\n"
-                            )
+                            msg += f"📋 {info[0] if isinstance(info, list) else info}\n"
                         await bot.send_message(CHAT_ID, msg)
 
                         if ss and os.path.exists(ss):
                             await bot.send_photo(
-                                CHAT_ID,
-                                FSInputFile(ss),
-                                caption=f"✅ Confirmation for "
-                                f"{person_label}",
+                                CHAT_ID, FSInputFile(ss),
+                                caption=f"✅ Confirmation for {person_label}"
                             )
                     except Exception:
                         pass
                 else:
-                    logging.error(
-                        f"❌ Booking FAILED for {person_label}"
-                    )
+                    logging.error(f"❌ Booking FAILED for {person_label}")
                     try:
-                        detail = (
-                            "\n".join(str(t) for t in info)
-                            if isinstance(info, list)
-                            else str(info)
-                        )
+                        detail = "\n".join(str(t) for t in info) if isinstance(info, list) else str(info)
                         await bot.send_message(
                             CHAT_ID,
-                            f"❌ Booking failed for "
-                            f"{person_label}:\n{detail}\n\n"
-                            f"Will retry on next cycle...",
+                            f"❌ Booking failed for {person_label}:\n{detail}\n\n"
+                            f"Will retry on next cycle..."
                         )
                     except Exception:
                         pass
 
             except Exception as e:
-                logging.error(
-                    f"Error checking for {person_label}: {e}",
-                    exc_info=True,
-                )
+                logging.error(f"Error checking for {person_label}: {e}", exc_info=True)
                 result["bookings_made"].append(
-                    (
-                        person_idx,
-                        False,
-                        [f"Error: {str(e)}"],
-                        None,
-                    )
+                    (person_idx, False, [f"Error: {str(e)}"], None)
                 )
                 continue
 
@@ -1895,38 +1424,33 @@ class AppointmentChecker:
     # ─── MAIN POLLING LOOP ───────────────────────────────────────────────
 
     async def run_polling_loop(self):
+        """
+        Main loop: check every CHECK_INTERVAL_SECONDS until ALL persons are booked.
+        """
+        # Initialize booking status
         self.persons_booked = [False] * len(self.ALL_PERSONS)
         self.check_count = 0
 
         logging.info(f"")
-        logging.info(f"{'=' * 60}")
+        logging.info(f"{'='*60}")
         logging.info(f"  APPOINTMENT POLLING STARTED")
-        logging.info(
-            f"  Checking every {CHECK_INTERVAL_SECONDS} seconds "
-            f"({CHECK_INTERVAL_SECONDS // 60} min)"
-        )
-        logging.info(
-            f"  Booking for {len(self.ALL_PERSONS)} person(s):"
-        )
+        logging.info(f"  Checking every {CHECK_INTERVAL_SECONDS} seconds ({CHECK_INTERVAL_SECONDS//60} min)")
+        logging.info(f"  Booking for {len(self.ALL_PERSONS)} person(s):")
         for i, p in enumerate(self.ALL_PERSONS):
-            logging.info(
-                f"    {i + 1}. {p['Firstname']} {p['Lastname']}"
-            )
-        logging.info(f"{'=' * 60}")
+            logging.info(f"    {i+1}. {p['Firstname']} {p['Lastname']}")
+        logging.info(f"{'='*60}")
 
         try:
             persons_list = "\n".join(
-                f"  {i + 1}. {p['Firstname']} {p['Lastname']}"
+                f"  {i+1}. {p['Firstname']} {p['Lastname']}"
                 for i, p in enumerate(self.ALL_PERSONS)
             )
             await bot.send_message(
                 CHAT_ID,
                 f"🚀 Appointment polling started!\n\n"
-                f"⏱ Checking every "
-                f"{CHECK_INTERVAL_SECONDS // 60} minutes\n"
+                f"⏱ Checking every {CHECK_INTERVAL_SECONDS//60} minutes\n"
                 f"👥 Booking for:\n{persons_list}\n\n"
-                f"I'll notify you when appointments are found "
-                f"and booked.",
+                f"I'll notify you when appointments are found and booked."
             )
         except Exception:
             pass
@@ -1934,39 +1458,28 @@ class AppointmentChecker:
         while not self._all_persons_booked():
             self.check_count += 1
             unbooked = self._get_unbooked_indices()
-            unbooked_names = [
-                self._get_person_label(i) for i in unbooked
-            ]
+            unbooked_names = [self._get_person_label(i) for i in unbooked]
 
             logging.info(f"")
-            logging.info(f"{'=' * 60}")
+            logging.info(f"{'='*60}")
             logging.info(f"  CHECK CYCLE #{self.check_count}")
-            logging.info(
-                f"  Still need to book: "
-                f"{', '.join(unbooked_names)}"
-            )
-            logging.info(f"{'=' * 60}")
+            logging.info(f"  Still need to book: {', '.join(unbooked_names)}")
+            logging.info(f"{'='*60}")
 
+            # Send periodic status every 10 checks (every ~20 min)
             if self.check_count % 10 == 0:
                 try:
                     booked_str = ""
                     for i, booked in enumerate(self.persons_booked):
                         p = self.ALL_PERSONS[i]
-                        status = (
-                            "✅ Booked" if booked else "⏳ Waiting"
-                        )
-                        booked_str += (
-                            f"  {status} - {p['Firstname']} "
-                            f"{p['Lastname']}\n"
-                        )
+                        status = "✅ Booked" if booked else "⏳ Waiting"
+                        booked_str += f"  {status} - {p['Firstname']} {p['Lastname']}\n"
 
                     await bot.send_message(
                         CHAT_ID,
-                        f"📊 Status update "
-                        f"(check #{self.check_count}):\n\n"
+                        f"📊 Status update (check #{self.check_count}):\n\n"
                         f"{booked_str}\n"
-                        f"Still checking every "
-                        f"{CHECK_INTERVAL_SECONDS // 60} min...",
+                        f"Still checking every {CHECK_INTERVAL_SECONDS//60} min..."
                     )
                 except Exception:
                     pass
@@ -1976,92 +1489,64 @@ class AppointmentChecker:
 
                 if not cycle_result["appointments_found"]:
                     logging.info(
-                        f"No appointments found in cycle "
-                        f"#{self.check_count}. "
-                        f"Waiting {CHECK_INTERVAL_SECONDS}s "
-                        f"before next check..."
+                        f"No appointments found in cycle #{self.check_count}. "
+                        f"Waiting {CHECK_INTERVAL_SECONDS}s before next check..."
                     )
                 else:
+                    # Appointments were found — check if we need to wait or continue immediately
                     any_new_booking = any(
-                        bm[1]
-                        for bm in cycle_result["bookings_made"]
+                        bm[1] for bm in cycle_result["bookings_made"]
                     )
-                    if (
-                        any_new_booking
-                        and not self._all_persons_booked()
-                    ):
-                        logging.info(
-                            "Some bookings made. Checking "
-                            "immediately for remaining persons..."
-                        )
-                        continue
+                    if any_new_booking and not self._all_persons_booked():
+                        logging.info("Some bookings made. Checking immediately for remaining persons...")
+                        continue  # skip the wait, check again now
 
             except Exception as e:
-                logging.error(
-                    f"Error in check cycle "
-                    f"#{self.check_count}: {e}",
-                    exc_info=True,
-                )
+                logging.error(f"Error in check cycle #{self.check_count}: {e}", exc_info=True)
                 try:
                     await bot.send_message(
                         CHAT_ID,
-                        f"⚠️ Error in check "
-                        f"#{self.check_count}: {e}\nWill retry...",
+                        f"⚠️ Error in check #{self.check_count}: {e}\nWill retry..."
                     )
                 except Exception:
                     pass
 
+            # Check if all booked after this cycle
             if self._all_persons_booked():
                 break
 
-            logging.info(
-                f"💤 Sleeping {CHECK_INTERVAL_SECONDS}s "
-                f"until next check..."
-            )
+            # Wait before next check
+            logging.info(f"💤 Sleeping {CHECK_INTERVAL_SECONDS}s until next check...")
             await asyncio.sleep(CHECK_INTERVAL_SECONDS)
 
+        # ─── All persons booked! ───
         logging.info(f"")
-        logging.info(f"{'=' * 60}")
+        logging.info(f"{'='*60}")
         logging.info(f"  🎉🎉🎉 ALL PERSONS BOOKED! 🎉🎉🎉")
-        logging.info(
-            f"  Total check cycles: {self.check_count}"
-        )
-        logging.info(f"{'=' * 60}")
+        logging.info(f"  Total check cycles: {self.check_count}")
+        logging.info(f"{'='*60}")
 
         try:
-            summary = (
-                "🎉🎉🎉 ALL APPOINTMENTS BOOKED! 🎉🎉🎉\n\n"
-            )
+            summary = "🎉🎉🎉 ALL APPOINTMENTS BOOKED! 🎉🎉🎉\n\n"
             for i, p in enumerate(self.ALL_PERSONS):
-                summary += (
-                    f"✅ {p['Firstname']} {p['Lastname']}\n"
-                )
+                summary += f"✅ {p['Firstname']} {p['Lastname']}\n"
             summary += f"\n📊 Total checks: {self.check_count}"
             await bot.send_message(CHAT_ID, summary)
         except Exception:
             pass
 
     def cleanup(self):
-        """Full cleanup: quit browser + kill orphans."""
         try:
-            if self.driver:
-                self.driver.quit()
+            self.driver.quit()
         except Exception:
             pass
-        self.driver = None
-        self._force_kill_chrome()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TELEGRAM NOTIFICATIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
-
-async def send_notification(
-    available_times,
-    screenshot_path=None,
-    confirmation_screenshot=None,
-):
+async def send_notification(available_times, screenshot_path=None, confirmation_screenshot=None):
     message = "🚨 Appointment Booking Summary!\n\n"
     for t in available_times:
         message += f"📅 {t}\n"
@@ -2071,22 +1556,12 @@ async def send_notification(
         await bot.send_message(CHAT_ID, message)
         if screenshot_path and os.path.exists(screenshot_path):
             try:
-                await bot.send_photo(
-                    CHAT_ID,
-                    FSInputFile(screenshot_path),
-                    caption="📸 Form screenshot",
-                )
+                await bot.send_photo(CHAT_ID, FSInputFile(screenshot_path), caption="📸 Form screenshot")
             except Exception:
                 pass
-        if confirmation_screenshot and os.path.exists(
-            confirmation_screenshot
-        ):
+        if confirmation_screenshot and os.path.exists(confirmation_screenshot):
             try:
-                await bot.send_photo(
-                    CHAT_ID,
-                    FSInputFile(confirmation_screenshot),
-                    caption="✅ Confirmation",
-                )
+                await bot.send_photo(CHAT_ID, FSInputFile(confirmation_screenshot), caption="✅ Confirmation")
             except Exception:
                 pass
     except Exception as e:
@@ -2096,7 +1571,6 @@ async def send_notification(
 # ─────────────────────────────────────────────────────────────────────────────
 # TELEGRAM HANDLERS
 # ─────────────────────────────────────────────────────────────────────────────
-
 
 @dp.message(Command("status"))
 async def handle_status(message: Message):
@@ -2108,89 +1582,62 @@ async def handle_status(message: Message):
 
         booked_str = ""
         for i, p in enumerate(checker_instance.ALL_PERSONS):
-            booked = (
-                i < len(checker_instance.persons_booked)
-                and checker_instance.persons_booked[i]
-            )
+            booked = (i < len(checker_instance.persons_booked)
+                      and checker_instance.persons_booked[i])
             status = "✅ Booked" if booked else "⏳ Waiting"
-            booked_str += (
-                f"  {status} - {p['Firstname']} "
-                f"{p['Lastname']}\n"
-            )
+            booked_str += f"  {status} - {p['Firstname']} {p['Lastname']}\n"
 
         await message.reply(
             f"🤖 Bot is running\n"
             f"📊 Check cycles: {checks}\n"
             f"👤 Currently: {person_label}\n"
-            f"🔒 CAPTCHA wait: "
-            f"{'Yes ⏳' if waiting else 'No'}\n\n"
+            f"🔒 CAPTCHA wait: {'Yes ⏳' if waiting else 'No'}\n\n"
             f"👥 Booking status:\n{booked_str}"
         )
     else:
-        await message.reply(
-            "Bot is idle (no active checker)."
-        )
+        await message.reply("Bot is idle (no active checker).")
 
 
 @dp.message(F.text)
 async def handle_manual_captcha(message: Message):
     global checker_instance
 
-    if message.text.startswith("/"):
+    if message.text.startswith('/'):
         return
     if str(message.chat.id) != str(CHAT_ID):
         return
 
-    if (
-        checker_instance
-        and checker_instance.waiting_for_manual_captcha
-    ):
+    if checker_instance and checker_instance.waiting_for_manual_captcha:
         captcha_code = message.text.strip().upper()
         if not captcha_code.isalnum():
-            await message.reply(
-                "❌ Invalid. Send only letters/numbers "
-                "(e.g., 'ABC123')"
-            )
+            await message.reply("❌ Invalid. Send only letters/numbers (e.g., 'ABC123')")
             return
         if checker_instance.receive_manual_captcha(captcha_code):
-            await message.reply(
-                f"✅ CAPTCHA received: {captcha_code}\n"
-                f"Submitting form..."
-            )
+            await message.reply(f"✅ CAPTCHA received: {captcha_code}\nSubmitting form...")
         else:
-            await message.reply(
-                "⚠️ Not expecting CAPTCHA input right now."
-            )
+            await message.reply("⚠️ Not expecting CAPTCHA input right now.")
     else:
-        await message.reply(
-            "ℹ️ Not waiting for CAPTCHA input."
-        )
+        await message.reply("ℹ️ Not waiting for CAPTCHA input.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 
-
 async def run_appointment_checker():
+    """Run the appointment checker polling loop."""
     global checker_instance
 
-    logging.info(
-        "=== APPOINTMENT CHECKER STARTED (POLLING MODE) ==="
-    )
+    logging.info("=== APPOINTMENT CHECKER STARTED (POLLING MODE) ===")
     checker = AppointmentChecker()
     checker_instance = checker
 
     try:
         await checker.run_polling_loop()
     except Exception as e:
-        logging.error(
-            f"Polling loop error: {e}", exc_info=True
-        )
+        logging.error(f"Polling loop error: {e}", exc_info=True)
         try:
-            await bot.send_message(
-                CHAT_ID, f"❌ Fatal error: {e}"
-            )
+            await bot.send_message(CHAT_ID, f"❌ Fatal error: {e}")
         except Exception:
             pass
     finally:
@@ -2203,19 +1650,13 @@ async def run_appointment_checker():
 async def main():
     global main_loop
     main_loop = asyncio.get_event_loop()
-    polling_task = asyncio.create_task(
-        dp.start_polling(bot)
-    )
-    checker_task = asyncio.create_task(
-        run_appointment_checker()
-    )
+    polling_task = asyncio.create_task(dp.start_polling(bot))
+    checker_task = asyncio.create_task(run_appointment_checker())
 
     try:
         await checker_task
     except Exception as e:
-        logging.error(
-            f"Checker task error: {e}", exc_info=True
-        )
+        logging.error(f"Checker task error: {e}", exc_info=True)
     finally:
         logging.info("Stopping Telegram polling...")
         await dp.stop_polling()
