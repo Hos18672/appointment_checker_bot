@@ -46,7 +46,7 @@ checker_instance = None
 main_loop = None
 
 # ─── Polling interval in seconds ───
-CHECK_INTERVAL_SECONDS = 60  # 1 minutes
+CHECK_INTERVAL_SECONDS = 30  # 30 seconds between checks when no appointment is found
 
 
 def parse_and_format_date(raw: str) -> str:
@@ -166,7 +166,7 @@ class AppointmentChecker:
         "Email":                          "rezahosseiniafg@gmail.com",
         "LastnameAtBirth":                "Rezaei",
         "NationalityAtBirth":             "1",
-        "CountryOfBirth":                 "1",
+        "CountryOfBirth":                 "102",
         "PlaceOfBirth":                   "Teheran",
         "NationalityForApplication":      "1",
         "TraveldocumentDateOfIssue":      "04/23/2024",
@@ -180,7 +180,7 @@ class AppointmentChecker:
         "Firstname":                      "RAZIA",
         "DateOfBirth":                    "18/05/1998",
         "TraveldocumentNumber":           "P06128382",
-        "Sex":                            "1",               # 1=Female, 2=Male
+        "Sex":                            "2",       
         "Street":                         "Shahid Ali Koohkhil St, Plack 0",
         "Postcode":                       "3161679743",
         "City":                           "Alborz",
@@ -197,7 +197,7 @@ class AppointmentChecker:
         "TraveldocumentIssuingAuthority": "1",
     }
 
-    ALL_PERSONS = [PERSONAL_DATA_Test] #, PERSONAL_DATA_1, PERSONAL_DATA_2]
+    ALL_PERSONS = [PERSONAL_DATA_1, PERSONAL_DATA_2]
 
     def _get_person_label(self, index: int = None) -> str:
         if index is None:
@@ -480,9 +480,9 @@ class AppointmentChecker:
 
     # ─── CAPTCHA SUBMISSION ──────────────────────────────────────────────
 
-    async def _submit_form_with_captcha_handling(self, max_auto_attempts: int = 3) -> tuple:
+    async def _submit_form_with_captcha_handling(self, max_auto_attempts: int = 5) -> tuple:
         captcha_retry_count = 0
-        max_captcha_retries = 3
+        max_captcha_retries = 5
         auto_attempts_failed = 0
         max_total_attempts = max_auto_attempts + 5
         attempt = 0
@@ -940,23 +940,6 @@ class AppointmentChecker:
             data = person_data
             person_label = self._get_person_label()
 
-            date_fields = {
-                "DateOfBirth": data["DateOfBirth"],
-                "TraveldocumentDateOfIssue": data["TraveldocumentDateOfIssue"],
-                "TraveldocumentValidUntil": data["TraveldocumentValidUntil"],
-            }
-            formatted_dates = {}
-            for field, raw_date in date_fields.items():
-                try:
-                    formatted_dates[field] = parse_and_format_date(raw_date)
-                except ValueError as ve:
-                    error_msg = f"❌ INVALID DATE for {person_label} '{field}': {ve}"
-                    try:
-                        await bot.send_message(CHAT_ID, error_msg)
-                    except Exception:
-                        pass
-                    return False, [error_msg], None
-
             try:
                 self.wait.until(EC.presence_of_element_located((By.ID, "Lastname")))
             except TimeoutException:
@@ -965,7 +948,7 @@ class AppointmentChecker:
             text_fields = [
                 ("Lastname", data["Lastname"]),
                 ("Firstname", data["Firstname"]),
-                ("DateOfBirth", formatted_dates["DateOfBirth"]),
+                ("DateOfBirth", data["DateOfBirth"]),
                 ("TraveldocumentNumber", data["TraveldocumentNumber"]),
                 ("Street", data["Street"]),
                 ("Postcode", data["Postcode"]),
@@ -974,8 +957,8 @@ class AppointmentChecker:
                 ("Email", data["Email"]),
                 ("LastnameAtBirth", data["LastnameAtBirth"]),
                 ("PlaceOfBirth", data["PlaceOfBirth"]),
-                ("TraveldocumentDateOfIssue", formatted_dates["TraveldocumentDateOfIssue"]),
-                ("TraveldocumentValidUntil", formatted_dates["TraveldocumentValidUntil"]),
+                ("TraveldocumentDateOfIssue", data["TraveldocumentDateOfIssue"]),
+                ("TraveldocumentValidUntil", data["TraveldocumentValidUntil"]),
             ]
             for elem_id, value in text_fields:
                 try:
@@ -1132,9 +1115,97 @@ class AppointmentChecker:
 
             self.driver.get(self.url)
             logging.info("Navigated to appointment website")
+            
+            time.sleep(3)
 
             self.driver.switch_to.default_content()
-            if not self._select_option_fuzzy_with_retry("Office", "BAKU"):
+
+            # ===== DEBUG: Find where the elements actually are =====
+            # Check main page
+            buttons_main = self.driver.find_elements(By.CSS_SELECTOR, "input[type='submit']")
+            logging.info(f"Main page - Found {len(buttons_main)} submit buttons:")
+            for b in buttons_main:
+                logging.info(f"  → value='{b.get_attribute('value')}' name='{b.get_attribute('name')}'")
+            
+            lang_main = self.driver.find_elements(By.ID, "Language")
+            logging.info(f"Main page - Language dropdown found: {len(lang_main) > 0}")
+
+            # Check iframes
+            iframes = self.driver.find_elements(By.CSS_SELECTOR, "iframe")
+            logging.info(f"Found {len(iframes)} iframes")
+            
+            target_frame = None
+            for i, iframe in enumerate(iframes):
+                try:
+                    self.driver.switch_to.default_content()
+                    self.driver.switch_to.frame(iframe)
+                    
+                    lang_els = self.driver.find_elements(By.ID, "Language")
+                    buttons = self.driver.find_elements(By.CSS_SELECTOR, "input[type='submit']")
+                    
+                    logging.info(f"  iframe[{i}]: Language={len(lang_els) > 0}, buttons={len(buttons)}")
+                    for b in buttons:
+                        logging.info(f"    → value='{b.get_attribute('value')}' name='{b.get_attribute('name')}'")
+                    
+                    if lang_els:
+                        target_frame = iframe
+                        logging.info(f"  ✓ Language dropdown is in iframe[{i}]")
+                except Exception as e:
+                    logging.info(f"  iframe[{i}]: Error - {e}")
+            
+            self.driver.switch_to.default_content()
+            # ===== END DEBUG =====
+
+            # Now do the actual work - switch to correct frame if needed
+            if target_frame is not None:
+                self.driver.switch_to.frame(target_frame)
+                logging.info("Switched to iframe containing Language dropdown")
+
+            try:
+                wait = WebDriverWait(self.driver, 10)
+                
+                # Check if English is already selected
+                lang_element = wait.until(EC.presence_of_element_located((By.ID, "Language")))
+                lang_select = Select(lang_element)
+                current_lang = lang_select.first_selected_option.get_attribute("value")
+                logging.info(f"Current language: {current_lang}")
+                
+                if current_lang != "en":
+                    lang_select.select_by_value("en")
+                    logging.info("Selected Language: English")
+                    time.sleep(1)
+                    
+                    # The button still has its current-language label (e.g. 'ändern' in German).
+                    # Find the submit button whose name='Command' regardless of its display value.
+                    change_btn = self.driver.find_element(
+                        By.CSS_SELECTOR, "input[type='submit'][name='Command']"
+                    )
+                    self.driver.execute_script("arguments[0].click();", change_btn)
+                    logging.info("→ Language change button clicked")
+                    
+                    time.sleep(4)
+                    
+                    # After reload, re-acquire iframe context if applicable
+                    self.driver.switch_to.default_content()
+                    if target_frame is not None:
+                        iframes = self.driver.find_elements(By.CSS_SELECTOR, "iframe")
+                        for iframe in iframes:
+                            try:
+                                self.driver.switch_to.default_content()
+                                self.driver.switch_to.frame(iframe)
+                                if self.driver.find_elements(By.ID, "Language"):
+                                    break
+                            except Exception:
+                                continue
+                else:
+                    logging.info("English already selected, skipping language change")
+
+            except Exception as e:
+                logging.error(f"Error changing language: {e}")
+                return False
+
+            # Continue with Office selection
+            if not self._select_option_fuzzy_with_retry("Office", "TEHERAN"):
                 return False
             logging.info("Selected office: TEHERAN")
 
@@ -1143,8 +1214,8 @@ class AppointmentChecker:
             logging.info("→ Next")
 
             # Step 2: Visa type
-            visa_value ="24533100" #"13713913"
-            visa_text = "Beglaubigung / Apostille" #"Residence permit - NO STUDENTS / PUPILS but including dependents (spouses and children) of students"
+            visa_value = "48907107"
+            visa_text = "Beglaubigung / Legalization"
 
             try:
                 visa_select = self._get_select_by_id_with_retry("CalendarId")
@@ -1185,7 +1256,6 @@ class AppointmentChecker:
         except Exception as e:
             logging.error(f"Navigation error: {e}", exc_info=True)
             return False
-
     # ─── CHECK IF APPOINTMENTS AVAILABLE (without booking) ───────────────
 
     def _check_appointments_available(self) -> tuple:
@@ -1465,24 +1535,6 @@ class AppointmentChecker:
             logging.info(f"  CHECK CYCLE #{self.check_count}")
             logging.info(f"  Still need to book: {', '.join(unbooked_names)}")
             logging.info(f"{'='*60}")
-
-            # Send periodic status every 10 checks (every ~20 min)
-            if self.check_count % 10 == 0:
-                try:
-                    booked_str = ""
-                    for i, booked in enumerate(self.persons_booked):
-                        p = self.ALL_PERSONS[i]
-                        status = "✅ Booked" if booked else "⏳ Waiting"
-                        booked_str += f"  {status} - {p['Firstname']} {p['Lastname']}\n"
-
-                    await bot.send_message(
-                        CHAT_ID,
-                        f"📊 Status update (check #{self.check_count}):\n\n"
-                        f"{booked_str}\n"
-                        f"Still checking every {CHECK_INTERVAL_SECONDS//60} min..."
-                    )
-                except Exception:
-                    pass
 
             try:
                 cycle_result = await self._run_single_check_cycle()
