@@ -178,7 +178,7 @@ class AppointmentChecker:
     PERSONAL_DATA_2 = {
         "Lastname":                       "AHMADI",
         "Firstname":                      "RAZIA",
-        "DateOfBirth":                    "18/05/1998",
+        "DateOfBirth":                    "5/18/1998",
         "TraveldocumentNumber":           "P06128382",
         "Sex":                            "2",       
         "Street":                         "Shahid Ali Koohkhil St, Plack 0",
@@ -192,8 +192,8 @@ class AppointmentChecker:
         "CountryOfBirth":                 "1",
         "PlaceOfBirth":                   "Daykundi",
         "NationalityForApplication":      "1",
-        "TraveldocumentDateOfIssue":      "18/03/2024",
-        "TraveldocumentValidUntil":       "18/03/2029",
+        "TraveldocumentDateOfIssue":      "3/18/2024",
+        "TraveldocumentValidUntil":       "3/18/2029",
         "TraveldocumentIssuingAuthority": "1",
     }
 
